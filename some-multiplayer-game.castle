@@ -1,0 +1,9 @@
+---
+main: main.lua
+name: Some Multiplayer Game
+description: Making a multiplayer game of some kind.
+username: bridgs
+multiplayer:
+    - enabled: true
+dimensions: 400x400
+scaling: on
