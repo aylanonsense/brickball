@@ -5,5 +5,5 @@ description: Making a multiplayer game of some kind.
 username: bridgs
 multiplayer:
     - enabled: true
-dimensions: 400x400
+dimensions: 279x145
 scaling: on

@@ -1,31 +1,30 @@
 local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/3eabb5511ad651328db423d7143602f32d7afdd0/simulsim.lua'
 
-local GAME_WIDTH = 300
-local GAME_HEIGHT = 400
+local GAME_WIDTH = 279
+local GAME_HEIGHT = 145
 
--- Define a new game
 local game = simulsim.defineGame()
 
--- When the game is first loaded, set the background color
 function game.load(self)
   self:spawnEntity({
     type = 'ball',
     x = GAME_WIDTH / 2 - 10,
     y = GAME_HEIGHT / 2 - 10,
-    width = 20,
-    height = 20,
-    vx = 50,
-    vy = -105
+    width = 8,
+    height = 8,
+    vx = 25,
+    vy = -52
   })
-  for team = 1, 2 do
-    for c = 1, 10 do
-      for r = 1, 4 do
+  for r = 1, 10 do
+    for team = 1, 2 do
+      for c = 1, 6 do
         self:spawnEntity({
           type = 'brick',
-          x = 5 + 25 * c,
-          y = 20 + 15 * r + (200 * (team - 1)),
-          width = 20,
-          height = 10
+          x = 6 * (c - 1) + (team == 1 and 12 or GAME_WIDTH - 6 * 6 - 12),
+          y = 12 + 12 * (r - 1),
+          width = 6,
+          height = 12,
+          team = team
         })
       end
     end
@@ -34,35 +33,42 @@ end
 
 -- Update the game's state every frame by moving each entity
 function game.update(self, dt, isRenderable)
-  for _, entity in ipairs(self.entities) do
+  self:forEachEntity(function(entity)
     if entity.type == 'player' then
       local inputs = self:getInputsForClient(entity.clientId) or {}
       local moveX = (inputs.right and 1 or 0) - (inputs.left and 1 or 0)
       local moveY = (inputs.down and 1 or 0) - (inputs.up and 1 or 0)
-      entity.x = math.min(math.max(0, entity.x + 200 * moveX * dt), 380)
-      entity.y = math.min(math.max(0, entity.y + 200 * moveY * dt), 380)
+      entity.x = entity.x + 60 * moveX * dt
+      entity.y = entity.y + 60 * moveY * dt
+      self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
+      -- See if there have been collisions with any bricks
+      self:forEachEntity(function(entity2)
+        if entity2.type == 'brick' then
+          local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, 0.0, true)
+        end
+      end)
     elseif entity.type == 'ball' then
       entity.x = entity.x + entity.vx * dt
       entity.y = entity.y + entity.vy * dt
-      self:keepEntityInBounds(entity, true)
+      self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
       local xNew, yNew
       -- See if there have been collisions with any bricks
-      for _, entity2 in ipairs(self.entities) do
+      self:forEachEntity(function(entity2)
         if entity2.type == 'brick' then
-          local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, 4, -1.0, false)
+          local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
           if dir then
             entity.vx, entity.vy = vx, vy
             xNew, yNew = x, y
             entity2.scheduledForDespawn = true
           end
         end
-      end
+      end)
       -- Update the ball's position as a result of colliding with a brick
       if xNew and yNew then
         entity.x, entity.y = xNew, yNew
       end
     end
-  end
+  end)
   for i = #self.entities, 1, -1 do
     local entity = self.entities[i]
     if entity.scheduledForDespawn then
@@ -78,10 +84,12 @@ function game.handleEvent(self, eventType, eventData)
     self:spawnEntity({
       type = 'player',
       clientId = eventData.clientId,
-      x = eventData.x - 10,
-      y = eventData.y - 10,
-      width = 20,
-      height = 20
+      x = eventData.x - 5,
+      y = eventData.y - 4,
+      vx = 0,
+      vy = 0,
+      width = 10,
+      height = 8
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
@@ -89,33 +97,50 @@ function game.handleEvent(self, eventType, eventData)
   end
 end
 
-function game.keepEntityInBounds(self, entity, reverseVelocity)
-  if entity.x > GAME_WIDTH - entity.width then
-    entity.x = GAME_WIDTH - entity.width
-    if reverseVelocity and entity.vx > 0 then
-      entity.vx = -entity.vx
+function game.checkForBounds(self, entity, x, y, width, height, velocityMult, applyChanges)
+  velocityMult = velocityMult or 0.0
+  local dir
+  local xAdjusted, yAdjusted = entity.x, entity.y
+  local vxAdjusted, vyAdjusted = entity.vx, entity.vy
+  if entity.x > x + width - entity.width then
+    dir = 'right'
+    xAdjusted = x + width - entity.width
+    if velocityMult < 0 then
+      vxAdjusted = velocityMult * (entity.vx > 0 and entity.vx or -entity.vx)
+    else
+      vxAdjusted = velocityMult * entity.vx
     end
-    return 'right'
-  elseif entity.x < 0 then
-    entity.x = 0
-    if reverseVelocity and entity.vx < 0 then
-      entity.vx = -entity.vx
+  elseif entity.x < x then
+    dir = 'left'
+    xAdjusted = x
+    if velocityMult < 0 then
+      vxAdjusted = velocityMult * (entity.vx < 0 and entity.vx or -entity.vx)
+    else
+      vxAdjusted = velocityMult * entity.vx
     end
-    return 'left'
   end
-  if entity.y > GAME_HEIGHT - entity.height then
-    entity.y = GAME_HEIGHT - entity.height
-    if reverseVelocity and entity.vy > 0 then
-      entity.vy = -entity.vy
+  if entity.y > y + height - entity.height then
+    dir = 'down'
+    yAdjusted = y + height - entity.height
+    if velocityMult < 0 then
+      vyAdjusted = velocityMult * (entity.vy > 0 and entity.vy or -entity.vy)
+    else
+      vyAdjusted = velocityMult * entity.vy
     end
-    return 'down'
-  elseif entity.y < 0 then
-    entity.y = 0
-    if reverseVelocity and entity.vy < 0 then
-      entity.vy = -entity.vy
+  elseif entity.y < y then
+    dir = 'up'
+    yAdjusted = y
+    if velocityMult < 0 then
+      vyAdjusted = velocityMult * (entity.vy < 0 and entity.vy or -entity.vy)
+    else
+      vyAdjusted = velocityMult * entity.vy
     end
-    return 'up'
   end
+  if applyChanges then
+    entity.x, entity.y = xAdjusted, yAdjusted
+    entity.vx, entity.vy = vxAdjusted, vyAdjusted
+  end
+  return dir, xAdjusted, yAdjusted, vxAdjusted, vyAdjusted
 end
 
 function game.rectsOverlapping(self, x1, y1, w1, h1, x2, y2, w2, h2)
@@ -127,7 +152,7 @@ function game.entitiesOverlapping(self, a, b)
 end
 
 -- Checks to see if a (moving) is colliding with b (stationary) and if so from which direction
-function game.checkForEntityCollision(self, a, b, padding, velocityMult, applyChanges)
+function game.checkForEntityCollision(self, a, b, velocityMult, applyChanges, padding)
   velocityMult = velocityMult or 0.0
   local x1, y1, w1, h1, x2, y2, w2, h2 = a.x, a.y, a.width, a.height, b.x, b.y, b.width, b.height
   local p = padding or math.min(math.max(1, math.floor((math.min(w1, h1) - 1) / 2)), 5)
@@ -184,14 +209,19 @@ local network, server, client = simulsim.createGameNetwork(game, {
 function server.clientconnected(self, client)
   self:fireEvent('spawn-player', {
     clientId = client.clientId,
-    x = 100 + 200 * math.random(),
-    y = 100 + 200 * math.random()
+    x = GAME_WIDTH / 2,
+    y = GAME_HEIGHT / 2
   })
 end
 
 -- When a client disconnects from the server, despawn their player entity
 function server.clientdisconnected(self, client)
   self:fireEvent('despawn-player', { clientId = client.clientId })
+end
+
+function client.load(self)
+  love.graphics.setDefaultFilter('nearest', 'nearest')
+  self.spriteSheet = love.graphics.newImage('img/sprite-sheet.png')
 end
 
 -- Every frame the client tells the server which buttons it's pressing
@@ -206,17 +236,49 @@ end
 
 -- Draw the game for each client
 function client.draw(self)
-  -- Clear the screen
-  love.graphics.setColor(0.1, 0.1, 0.1)
-  love.graphics.rectangle('fill', 0, 0, GAME_WIDTH, GAME_HEIGHT)
-  -- Draw each entity's actual state
+  -- Draw the court
   love.graphics.setColor(1, 1, 1)
-  for _, entity in ipairs(self.gameWithoutPrediction.entities) do
-    love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
+  self:drawSprite(1, 204, 279, 145, 0, 0)
+  -- Draw each entity's actual state
+  -- love.graphics.setColor(1, 1, 1)
+  -- for _, entity in ipairs(self.gameWithoutPrediction.entities) do
+  --   love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
+  -- end
+  -- Draw each entity's shadow
+  love.graphics.setColor(1, 1, 1)
+  for _, entity in ipairs(self.game.entities) do
+    if entity.type == 'player' then
+      self:drawSprite(25, 17, 10, 4, entity.x, entity.y + entity.height - 6)
+    elseif entity.type == 'brick' then
+      self:drawSprite(1, 17, 8, 14, entity.x - (entity.team == 1 and 2 or 0), entity.y - 1)
+    elseif entity.type == 'ball' then
+      self:drawSprite(25, 22, 10, 4, entity.x - 1, entity.y + entity.height - 3)
+    end
   end
   -- Draw each entity
   love.graphics.setColor(1, 1, 1)
   for _, entity in ipairs(self.game.entities) do
-    love.graphics.rectangle('fill', entity.x, entity.y, entity.width, entity.height)
+    if entity.type == 'player' then
+      self:drawSprite(1, 33, 15, 16, entity.x - 1, entity.y - 9)
+    elseif entity.type == 'brick' then
+      self:drawSprite(29, 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
+    elseif entity.type == 'ball' then
+      self:drawSprite(63, 1, 8, 8, entity.x, entity.y - 1)
+    else
+      love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
+    end
+  end
+end
+
+-- Draw a sprite from a sprite sheet to the screen
+function client.drawSprite(self, sx, sy, sw, sh, x, y, flipHorizontal, flipVertical, rotation)
+  if self.spriteSheet then
+    local width, height = self.spriteSheet:getDimensions()
+    return love.graphics.draw(self.spriteSheet,
+      love.graphics.newQuad(sx, sy, sw, sh, width, height),
+      x + sw / 2, y + sh / 2,
+      rotation or 0,
+      flipHorizontal and -1 or 1, flipVertical and -1 or 1,
+      sw / 2, sh / 2)
   end
 end
