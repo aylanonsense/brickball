@@ -39,8 +39,21 @@ function game.update(self, dt, isRenderable)
       local moveX = (inputs.right and 1 or 0) - (inputs.left and 1 or 0)
       local moveY = (inputs.down and 1 or 0) - (inputs.up and 1 or 0)
       local speedMult = moveX ~= 0 and moveY ~= 0 and 0.707 or 1.00
-      entity.x = entity.x + 60 * speedMult * moveX * dt
-      entity.y = entity.y + 55 * speedMult * moveY * dt
+      entity.vx = 60 * speedMult * moveX
+      entity.vy = 55 * speedMult * moveY
+      entity.x = entity.x + entity.vx * dt
+      entity.y = entity.y + entity.vy * dt
+      entity.isMoving = moveX ~= 0 or moveY ~= 0
+      if entity.isMoving then
+        entity.facingX, entity.facingY = moveX, moveY
+        entity.moveFrames = entity.moveFrames + 1
+        entity.stillFrames = 0
+      else
+        entity.stillFrames = entity.stillFrames + 1
+        if entity.stillFrames > 3 then
+          entity.moveFrames = 0
+        end
+      end
       self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
       -- See if there have been collisions with any bricks
       self:forEachEntity(function(entity2)
@@ -92,8 +105,13 @@ function game.handleEvent(self, eventType, eventData)
       y = eventData.y - 4,
       vx = 0,
       vy = 0,
+      facingX = 1,
+      facingY = -1,
       width = 10,
-      height = 8
+      height = 8,
+      isMoving = false,
+      moveFrames = 0,
+      stillFrames = 0
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
@@ -263,7 +281,22 @@ function client.draw(self)
   love.graphics.setColor(1, 1, 1)
   for _, entity in ipairs(self.game.entities) do
     if entity.type == 'player' then
-      self:drawSprite(1, 33, 15, 16, entity.x - 1, entity.y - 9)
+      local animSprite
+      if entity.isMoving then
+        animSprite = 2 + math.floor((entity.moveFrames % (8 * 5)) / 5)
+      else
+        animSprite = 1
+      end
+      local dirSprite
+      if entity.facingY < 0 then
+        dirSprite = entity.facingX == 0 and 1 or 2
+      elseif entity.facingY > 0 then
+        dirSprite = entity.facingX == 0 and 5 or 4
+      else
+        dirSprite = 3
+      end
+      local flipHorizontal = entity.facingX < 0
+      self:drawSprite(1 + 16 * (animSprite - 1), 33 + 17 * (dirSprite - 1), 15, 16, entity.x - (flipHorizontal and 4 or 1), entity.y - 9, flipHorizontal)
     elseif entity.type == 'brick' then
       self:drawSprite(29, 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
     elseif entity.type == 'ball' then
