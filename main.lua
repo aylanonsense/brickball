@@ -12,8 +12,8 @@ function game.load(self)
     y = GAME_HEIGHT / 2 - 10,
     width = 8,
     height = 8,
-    vx = 25,
-    vy = -52
+    vx = 100,
+    vy = -20
   })
   for r = 1, 10 do
     for team = 1, 2 do
@@ -38,8 +38,9 @@ function game.update(self, dt, isRenderable)
       local inputs = self:getInputsForClient(entity.clientId) or {}
       local moveX = (inputs.right and 1 or 0) - (inputs.left and 1 or 0)
       local moveY = (inputs.down and 1 or 0) - (inputs.up and 1 or 0)
-      entity.x = entity.x + 60 * moveX * dt
-      entity.y = entity.y + 60 * moveY * dt
+      local speedMult = moveX ~= 0 and moveY ~= 0 and 0.707 or 1.00
+      entity.x = entity.x + 60 * speedMult * moveX * dt
+      entity.y = entity.y + 55 * speedMult * moveY * dt
       self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
       -- See if there have been collisions with any bricks
       self:forEachEntity(function(entity2)
@@ -52,14 +53,17 @@ function game.update(self, dt, isRenderable)
       entity.y = entity.y + entity.vy * dt
       self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
       local xNew, yNew
+      local vxOld, vyOld = entity.vx, entity.vy
       -- See if there have been collisions with any bricks
       self:forEachEntity(function(entity2)
         if entity2.type == 'brick' then
           local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
           if dir then
-            entity.vx, entity.vy = vx, vy
             xNew, yNew = x, y
-            entity2.scheduledForDespawn = true
+            entity.vx, entity.vy = vx, vy
+            if entity.vx ~= vxOld or entity.vy ~= vyOld then
+              entity2.scheduledForDespawn = true
+            end
           end
         end
       end)
@@ -263,7 +267,7 @@ function client.draw(self)
     elseif entity.type == 'brick' then
       self:drawSprite(29, 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
     elseif entity.type == 'ball' then
-      self:drawSprite(63, 1, 8, 8, entity.x, entity.y - 1)
+      self:drawSprite(68, 17, 8, 8, entity.x, entity.y - 1)
     else
       love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
     end
