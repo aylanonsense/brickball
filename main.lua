@@ -52,6 +52,20 @@ function game.update(self, dt, isRenderable)
       else
         speed = 60
       end
+      if entity.throwPhase then
+        entity.throwPhaseFrames = entity.throwPhaseFrames + 1
+        if entity.throwPhase == 'charging' then
+          entity.charge = ((7 * entity.throwPhaseFrames + 100) % 400) - 100
+          if entity.charge > 100 then
+            entity.charge = 200 - entity.charge
+          end
+        elseif entity.throwPhase == 'aiming' then
+          entity.aim = (((9 - 8 * math.abs(entity.charge) / 100) * entity.throwPhaseFrames + 100) % 400) - 100
+          if entity.aim > 100 then
+            entity.aim = 200 - entity.aim
+          end
+        end
+      end
       entity.vx = 0.7 * entity.vx + 0.3 * (speed * diagonalMult * moveX)
       entity.vy = 0.7 * entity.vy + 0.3 * (speed * 0.9 * diagonalMult * moveY)
       entity.x = entity.x + entity.vx * dt
@@ -142,7 +156,10 @@ function game.handleEvent(self, eventType, eventData)
       moveFrames = 0,
       stillFrames = 0,
       heldBall = nil,
-      throwPhase = nil
+      throwPhase = nil,
+      throwPhaseFrames = 0,
+      charge = nil,
+      aim = nil
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
@@ -152,17 +169,34 @@ function game.handleEvent(self, eventType, eventData)
     if player and player.heldBall then
       if eventType == 'charge-throw' and not player.throwPhase then
         player.throwPhase = 'charging'
+        player.throwPhaseFrames = 0
+        player.charge = 0
       elseif eventType == 'aim-throw' and player.throwPhase == 'charging' then
         player.throwPhase = 'aiming'
+        player.throwPhaseFrames = 0
+        player.aim = 0
+        if eventData.charge then
+          player.charge = eventData.charge
+        end
       elseif eventType == 'throw' and player.throwPhase == 'aiming' then
         local ball = self:getEntityById(player.heldBall)
+        local charge = eventData.charge or player.charge
+        local aim = eventData.aim or player.aim
         player.throwPhase = nil
+        player.throwPhaseFrames = 0
+        player.charge = nil
+        player.aim = nil
         player.heldBall = nil
         if ball then
+          local angle = aim / 73
+          local dx = 5 * math.cos(angle) * (player.team == 1 and 1 or -1)
+          local dy = 5 * math.sin(angle)
+          local speed = 90 - 60 * math.abs(charge / 100)
+          ball.vx = speed * math.cos(angle) * (player.team == 1 and 1 or -1)
+          ball.vy = speed * math.sin(angle)
+          ball.x = player.x + dx + player.width / 2 - ball.width / 2
+          ball.y = player.y + dy - 3 + player.height / 2 - ball.height / 2
           ball.isBeingHeld = false
-          ball.x = player.x + player.width / 2 - ball.width / 2
-          ball.y = player.y + player.height / 2 - ball.height / 2
-          ball.vx = 30
         end
       end
     end
@@ -276,7 +310,7 @@ local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
   width = GAME_WIDTH,
   height = GAME_HEIGHT,
-  numClients = 4,
+  numClients = 1,
   latency = 300
 })
 
@@ -347,6 +381,7 @@ end
 
 -- Draw the game for each client
 function client.draw(self)
+  local player = self.game:getEntityWhere({ type = 'player', clientId = self.clientId })
   -- Draw the court
   love.graphics.setColor(1, 1, 1)
   self:drawSprite(1, 204, 279, 145, 0, 0)
@@ -369,7 +404,6 @@ function client.draw(self)
     end
   end
   -- Draw an indicator under your player character
-  local player = self.game:getEntityWhere({ type = 'player', clientId = self.clientId })
   if player then
     self:drawSprite(player.team == 1 and 53 or 36, 17, 16, 8, player.x - 3, player.y)
   end
@@ -399,12 +433,12 @@ function client.draw(self)
       if entity.throwPhase == 'charging' then
         animSprite = entity.isMoving and entity.moveFrames % 40 > 20 and 20 or 19
         dirSprite = 3
-        x, y = x  + (player.team == 1 and -3 or 3), y - 1
+        x, y = x  + (entity.team == 1 and -3 or 3), y - 1
         flipHorizontal = entity.team == 2
       elseif entity.throwPhase == 'aiming' then
         animSprite = entity.isMoving and entity.moveFrames % 70 > 35 and 22 or 21
         dirSprite = 3
-        x, y = x + (player.team == 1 and -3 or 3), y - 1
+        x, y = x + (entity.team == 1 and -3 or 3), y - 1
         flipHorizontal = entity.team == 2
       elseif entity.heldBall then
         animSprite = animSprite + 9
@@ -421,6 +455,16 @@ function client.draw(self)
       love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
     end
   end
+  -- Draw aiming indicator
+  if player and player.throwPhase == 'charging' then
+    self:drawSprite(120, 25, 29, 6, player.x - (player.team == 1 and 10 or 9), player.y - 15)
+    self:drawSprite(150, 21, 1, 10, player.x + (player.team == 1 and 4 or 5) + 13 * player.charge / 100, player.y - 18)
+  elseif player and player.throwPhase == 'aiming' then
+    local angle = player.aim / 73
+    local dx = 11 * math.cos(angle) * (player.team == 1 and 1 or -1)
+    local dy = 10 * math.sin(angle)
+    self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -3-5 or 0-5), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
+  end
 end
 
 function client.keypressed(self, key)
@@ -429,10 +473,10 @@ function client.keypressed(self, key)
     if player and player.heldBall then
       if not player.throwPhase then
         self:fireEvent('charge-throw', { playerId = player.id })
-      elseif player.throwPhase == 'charging' then
-        self:fireEvent('aim-throw', { playerId = player.id })
-      elseif player.throwPhase == 'aiming' then
-        self:fireEvent('throw', { playerId = player.id })
+      elseif player.throwPhase == 'charging' and player.throwPhaseFrames > 10 then
+        self:fireEvent('aim-throw', { playerId = player.id, charge = player.charge })
+      elseif player.throwPhase == 'aiming' and player.throwPhaseFrames > 10 then
+        self:fireEvent('throw', { playerId = player.id, charge = player.charge, aim = player.aim })
       end
     end
   end
