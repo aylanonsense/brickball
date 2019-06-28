@@ -15,6 +15,9 @@ function game.load(self)
     height = 8,
     vx = 0,
     vy = 0,
+    thrower = nil,
+    team = nil,
+    framesSinceThrow = 0,
     freezeFrames = 0,
     isBeingHeld = false
   })
@@ -40,14 +43,20 @@ end
 function game.update(self, dt, isRenderable)
   self:forEachEntity(function(entity)
     if entity.type == 'player' then
+      entity.invincibilityFrames = math.max(0, entity.invincibilityFrames - 1)
       local inputs = self:getInputsForClient(entity.clientId) or {}
       local moveX = (inputs.right and 1 or 0) - (inputs.left and 1 or 0)
       local moveY = (inputs.down and 1 or 0) - (inputs.up and 1 or 0)
       local diagonalMult = moveX ~= 0 and moveY ~= 0 and 0.707 or 1.00
-      if entity.anim == 'catching' or entity.anim == 'throwing' then
+      if entity.anim == 'catching' or entity.anim == 'throwing' or entity.anim == 'standing-up' or entity.anim == 'getting-hit' then
         entity.animFrames = entity.animFrames - 1
         if entity.animFrames <= 0 then
-          entity.anim = nil
+          if entity.anim == 'getting-hit' then
+            entity.anim = 'standing-up'
+            entity.animFrames = 30
+          else
+            entity.anim = nil
+          end
         end
       elseif entity.anim then
         entity.animFrames = entity.animFrames + 1
@@ -69,13 +78,15 @@ function game.update(self, dt, isRenderable)
         speed = 20
       elseif entity.anim == 'aiming' then
         speed = 5
-      elseif entity.anim == 'throwing' or entity.anim == 'catching' then
+      elseif entity.anim == 'throwing' or entity.anim == 'catching' or entity.anim == 'getting-hit' or entity.anim == 'standing-up' then
         speed = 0
       else
         speed = 60
       end
-      entity.vx = 0.7 * entity.vx + 0.3 * (speed * diagonalMult * moveX)
-      entity.vy = 0.7 * entity.vy + 0.3 * (speed * 0.9 * diagonalMult * moveY)
+      if entity.anim ~= 'getting-hit' then
+        entity.vx = 0.7 * entity.vx + 0.3 * (speed * diagonalMult * moveX)
+        entity.vy = 0.7 * entity.vy + 0.3 * (speed * 0.9 * diagonalMult * moveY)
+      end
       entity.x = entity.x + entity.vx * dt
       entity.y = entity.y + entity.vy * dt
       entity.isMoving = speed ~= 0 and (moveX ~= 0 or moveY ~= 0)
@@ -88,9 +99,9 @@ function game.update(self, dt, isRenderable)
         entity.moveFrames = 0
       end
       if entity.team == 1 then
-        self:checkForBounds(entity, 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, -1.0, true)
+        self:checkForBounds(entity, 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, 0.0, true)
       else
-        self:checkForBounds(entity, GAME_WIDTH / 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, -1.0, true)
+        self:checkForBounds(entity, GAME_WIDTH / 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, 0.0, true)
       end
       self:forEachEntity(function(entity2)
         -- Try to pick up balls
@@ -104,6 +115,13 @@ function game.update(self, dt, isRenderable)
             elseif not entity.heldBall and not entity.anim and entity2.vx == 0 and entity2.vy == 0 and self:entitiesOverlapping(entity, entity2) then
               entity.heldBall = entity2.id
               entity2.isBeingHeld = true
+            elseif entity.invincibilityFrames <= 0 and (entity2.framesSinceThrow > 10 or entity2.thrower ~= entity.id) and self:entitiesOverlapping(entity, entity2) then
+              entity.anim = 'getting-hit'
+              entity.animFrames = 20
+              entity.vx = 1.2 * entity2.vx - entity.vx
+              entity.vy = 1.2 * entity2.vy - entity.vy
+              entity.invincibilityFrames = 120
+              self:temporarilyDisableSyncForEntity(entity)
             end
           end
         -- See if there have been collisions with any bricks
@@ -115,6 +133,7 @@ function game.update(self, dt, isRenderable)
       if entity.freezeFrames > 0 then
         entity.freezeFrames = entity.freezeFrames - 1
       elseif not entity.isBeingHeld then
+        entity.framesSinceThrow = entity.framesSinceThrow + 1
         entity.x = entity.x + entity.vx * dt
         entity.y = entity.y + entity.vy * dt
         self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
@@ -173,7 +192,8 @@ function game.handleEvent(self, eventType, eventData)
       anim = nil,
       animFrames = 0,
       charge = nil,
-      aim = nil
+      aim = nil,
+      invincibilityFrames = 0
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
@@ -217,6 +237,9 @@ function game.handleEvent(self, eventType, eventData)
             ball.x = player.x + dx + player.width / 2 - ball.width / 2
             ball.y = player.y + dy - 3 + player.height / 2 - ball.height / 2
             ball.isBeingHeld = false
+            ball.thrower = player.id
+            ball.team = player.team
+            ball.framesSinceThrow = 0
           end
         end
       end
@@ -453,7 +476,15 @@ function client.draw(self)
       else
         dirSprite = 3
       end
-      if entity.anim == 'catching' then
+      if entity.anim == 'getting-hit' then
+        animSprite = 19
+        dirSprite = 2
+        flipHorizontal = entity.vx < 0
+      elseif entity.anim == 'standing-up' then
+        animSprite = entity.animFrames > 10 and 20 or 21
+        dirSprite = 2
+        flipHorizontal = entity.vx < 0
+      elseif entity.anim == 'catching' then
         animSprite = entity.heldBall and 26 or (entity.animFrames > 30 and 24 or 25)
         dirSprite = 3
         flipHorizontal = entity.team == 2
