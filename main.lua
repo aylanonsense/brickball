@@ -44,15 +44,12 @@ function game.update(self, dt, isRenderable)
       local moveX = (inputs.right and 1 or 0) - (inputs.left and 1 or 0)
       local moveY = (inputs.down and 1 or 0) - (inputs.up and 1 or 0)
       local diagonalMult = moveX ~= 0 and moveY ~= 0 and 0.707 or 1.00
-      local speed
-      if entity.throwPhase == 'charging' then
-        speed = 20
-      elseif entity.throwPhase == 'aiming' then
-        speed = 5
-      else
-        speed = 60
-      end
-      if entity.throwPhase then
+      if entity.throwPhase == 'throwing' then
+        entity.throwPhaseFrames = entity.throwPhaseFrames - 1
+        if entity.throwPhaseFrames <= 0 then
+          entity.throwPhase = nil
+        end
+      elseif entity.throwPhase then
         entity.throwPhaseFrames = entity.throwPhaseFrames + 1
         if entity.throwPhase == 'charging' then
           entity.charge = ((7 * entity.throwPhaseFrames + 100) % 400) - 100
@@ -66,11 +63,22 @@ function game.update(self, dt, isRenderable)
           end
         end
       end
+      -- Calculate speed based on the player's state
+      local speed
+      if entity.throwPhase == 'charging' then
+        speed = 20
+      elseif entity.throwPhase == 'aiming' then
+        speed = 5
+      elseif entity.throwPhase == 'throwing' then
+        speed = 0
+      else
+        speed = 60
+      end
       entity.vx = 0.7 * entity.vx + 0.3 * (speed * diagonalMult * moveX)
       entity.vy = 0.7 * entity.vy + 0.3 * (speed * 0.9 * diagonalMult * moveY)
       entity.x = entity.x + entity.vx * dt
       entity.y = entity.y + entity.vy * dt
-      entity.isMoving = moveX ~= 0 or moveY ~= 0
+      entity.isMoving = speed ~= 0 and (moveX ~= 0 or moveY ~= 0)
       if entity.isMoving then
         entity.facingX, entity.facingY = moveX, moveY
         entity.moveFrames = entity.moveFrames + 1
@@ -182,16 +190,17 @@ function game.handleEvent(self, eventType, eventData)
         local ball = self:getEntityById(player.heldBall)
         local charge = eventData.charge or player.charge
         local aim = eventData.aim or player.aim
-        player.throwPhase = nil
-        player.throwPhaseFrames = 0
+        player.throwPhase = 'throwing'
+        player.throwPhaseFrames = 45 - 30 * math.abs(charge / 100)
         player.charge = nil
         player.aim = nil
         player.heldBall = nil
         if ball then
           local angle = aim / 73
-          local dx = 5 * math.cos(angle) * (player.team == 1 and 1 or -1)
-          local dy = 5 * math.sin(angle)
+          local dx = 10 * math.cos(angle) * (player.team == 1 and 1 or -1)
+          local dy = 10 * math.sin(angle)
           local speed = 90 - 60 * math.abs(charge / 100)
+          ball.freezeFrames = player.throwPhaseFrames - 2
           ball.vx = speed * math.cos(angle) * (player.team == 1 and 1 or -1)
           ball.vy = speed * math.sin(angle)
           ball.x = player.x + dx + player.width / 2 - ball.width / 2
@@ -310,7 +319,7 @@ local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
   width = GAME_WIDTH,
   height = GAME_HEIGHT,
-  numClients = 1,
+  numClients = 4,
   latency = 300
 })
 
@@ -440,6 +449,10 @@ function client.draw(self)
         dirSprite = 3
         x, y = x + (entity.team == 1 and -3 or 3), y - 1
         flipHorizontal = entity.team == 2
+      elseif entity.throwPhase == 'throwing' then
+        animSprite = 23
+        dirSprite = 3
+        flipHorizontal = entity.team == 2
       elseif entity.heldBall then
         animSprite = animSprite + 9
       end
@@ -465,6 +478,14 @@ function client.draw(self)
     local dy = 10 * math.sin(angle)
     self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -3-5 or 0-5), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
+end
+
+function client.isEntityUsingPrediction(self, entity)
+  return entity and (entity.clientId == self.clientId or entity.type == 'ball')
+end
+
+function client.isEventUsingPrediction(self, event)
+  -- TODO all throws should be predicted by all clients
 end
 
 function client.keypressed(self, key)
