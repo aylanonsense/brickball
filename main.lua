@@ -1,4 +1,4 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/bf9fc1d88be928a8a3a84ffa4342804c851f392e/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/ce3da77e12c28cf315abfe7c3d52e067842f47dd/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
@@ -175,18 +175,19 @@ function game.handleEvent(self, eventType, eventData)
   elseif eventType == 'charge-throw' or eventType == 'aim-throw' or eventType == 'throw' then
     local player = self:getEntityById(eventData.playerId)
     if player and player.heldBall then
-      if eventType == 'charge-throw' and not player.throwPhase then
+      if eventType == 'charge-throw' then
         player.throwPhase = 'charging'
         player.throwPhaseFrames = 0
         player.charge = 0
-      elseif eventType == 'aim-throw' and player.throwPhase == 'charging' then
+      elseif eventType == 'aim-throw' then
         player.throwPhase = 'aiming'
         player.throwPhaseFrames = 0
         player.aim = 0
         if eventData.charge then
           player.charge = eventData.charge
         end
-      elseif eventType == 'throw' and player.throwPhase == 'aiming' then
+      elseif eventType == 'throw' then
+        self:temporarilyDisableSyncForEntity(player)
         local ball = self:getEntityById(player.heldBall)
         local charge = eventData.charge or player.charge
         local aim = eventData.aim or player.aim
@@ -319,8 +320,8 @@ local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
   width = GAME_WIDTH,
   height = GAME_HEIGHT,
-  numClients = 1,
-  latency = 300
+  numClients = 4,
+  latency = 400
 })
 
 function server.load(self)
@@ -397,7 +398,9 @@ function client.draw(self)
   -- Draw each entity's actual state
   -- love.graphics.setColor(1, 1, 1)
   -- for _, entity in ipairs(self.gameWithoutPrediction.entities) do
-  --   love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
+  --   if entity.type == 'ball' then
+  --     love.graphics.circle('line', entity.x + entity.width / 2, entity.y + entity.height / 2, 6)
+  --   end
   -- end
   -- Draw each entity's shadow
   love.graphics.setColor(1, 1, 1)
@@ -484,8 +487,8 @@ function client.isEntityUsingPrediction(self, entity)
   return entity and (entity.clientId == self.clientId or entity.type == 'ball' or entity.type == 'brick')
 end
 
-function client.isEventUsingPrediction(self, event)
-  -- TODO all throws should be predicted by all clients
+function client.isEventUsingPrediction(self, event, firedByClient)
+  return firedByClient or event.type == 'throw'
 end
 
 function client.keypressed(self, key)
