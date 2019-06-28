@@ -1,4 +1,4 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/3eabb5511ad651328db423d7143602f32d7afdd0/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/bf9fc1d88be928a8a3a84ffa4342804c851f392e/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
@@ -18,14 +18,14 @@ function game.load(self)
     freezeFrames = 0,
     isBeingHeld = false
   })
-  for r = 1, 10 do
+  for r = 1, 9 do
     for team = 1, 2 do
       for c = 1, 5 do
         self:spawnEntity({
           id = 'brick-' .. c .. 'x' .. r .. '-' .. team,
           type = 'brick',
-          x = 6 * (c - 1) * (team == 1 and 1 or -1) + (team == 1 and 12 or GAME_WIDTH - 18),
-          y = 12 + 12 * (r - 1),
+          x = 6 * (c - 1) * (team == 1 and 1 or -1) + (team == 1 and 20 or GAME_WIDTH - 26),
+          y = 19 + 12 * (r - 1),
           width = 6,
           height = 12,
           color = c,
@@ -138,7 +138,7 @@ function game.update(self, dt, isRenderable)
   for i = #self.entities, 1, -1 do
     local entity = self.entities[i]
     if entity.scheduledForDespawn then
-      -- self:despawnEntity(entity)
+      self:despawnEntity(entity)
     end
   end
 end
@@ -319,7 +319,7 @@ local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
   width = GAME_WIDTH,
   height = GAME_HEIGHT,
-  numClients = 4,
+  numClients = 1,
   latency = 300
 })
 
@@ -481,7 +481,7 @@ function client.draw(self)
 end
 
 function client.isEntityUsingPrediction(self, entity)
-  return entity and (entity.clientId == self.clientId or entity.type == 'ball')
+  return entity and (entity.clientId == self.clientId or entity.type == 'ball' or entity.type == 'brick')
 end
 
 function client.isEventUsingPrediction(self, event)
