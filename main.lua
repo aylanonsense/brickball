@@ -1,4 +1,4 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/f76aa8c09f90f0c76dbca81b0bed808f4043aadb/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/16f08f874610e1da6bd8aaa5401a42555c24c895/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
