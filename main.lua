@@ -1,4 +1,4 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/16f08f874610e1da6bd8aaa5401a42555c24c895/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/605d24dcfa2c2edec872edf61122cf893286ff25/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
@@ -116,12 +116,14 @@ function game.update(self, dt, isRenderable)
               entity.heldBall = entity2.id
               entity2.isBeingHeld = true
             elseif entity.invincibilityFrames <= 0 and (entity2.framesSinceThrow > 10 or entity2.thrower ~= entity.id) and self:entitiesOverlapping(entity, entity2) then
-              entity.anim = 'getting-hit'
-              entity.animFrames = 20
-              entity.vx = 1.2 * entity2.vx - entity.vx
-              entity.vy = 1.2 * entity2.vy - entity.vy
-              entity.invincibilityFrames = 120
-              self:temporarilyDisableSyncForEntity(entity)
+              self:trigger('player-got-hit-by-ball', {
+                playerId = entity.id,
+                x = entity.x,
+                y = entity.y,
+                vx = 1.2 * entity2.vx - entity.vx,
+                vy = 1.2 * entity2.vy - entity.vy,
+                numTimesKnockedBack = entity.numTimesKnockedBack
+              })
             end
           end
         -- See if there have been collisions with any bricks
@@ -193,11 +195,24 @@ function game.handleEvent(self, eventType, eventData)
       animFrames = 0,
       charge = nil,
       aim = nil,
-      invincibilityFrames = 0
+      invincibilityFrames = 0,
+      numTimesKnockedBack = 0
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
     self:despawnEntity(self:getEntityWhere({ clientId = eventData.clientId }))
+  elseif eventType == 'knock-back-player' then
+    local player = self:getEntityById(eventData.playerId)
+    if player then
+      player.x = eventData.x
+      player.y = eventData.y
+      player.vx = eventData.vx
+      player.vy = eventData.vy
+      player.numTimesKnockedBack = player.numTimesKnockedBack + 1
+      player.anim = 'getting-hit'
+      player.animFrames = 20
+      player.invincibilityFrames = 120
+    end
   elseif eventType == 'charge-throw' or eventType == 'aim-throw' or eventType == 'throw' or eventType == 'catch' then
     local player = self:getEntityById(eventData.playerId)
     if player then
@@ -406,6 +421,20 @@ function server.clientdisconnected(self, client)
   self:fireEvent('despawn-player', { clientId = client.clientId })
 end
 
+function server.gametriggered(self, triggerName, triggerData)
+  if triggerName == 'player-got-hit-by-ball' then
+    local event = self:fireEvent('knock-back-player', {
+      playerId = triggerData.playerId,
+      x = triggerData.x,
+      y = triggerData.y,
+      vx = triggerData.vx,
+      vy = triggerData.vy
+    }, {
+      eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
+    })
+  end
+end
+
 function client.load(self)
   love.graphics.setDefaultFilter('nearest', 'nearest')
   self.spriteSheet = love.graphics.newImage('img/sprite-sheet.png')
@@ -425,7 +454,7 @@ end
 
 -- Draw the game for each client
 function client.draw(self)
-  local player = self.game:getEntityWhere({ type = 'player', clientId = self.clientId })
+  local player = self:getPlayer()
   -- Draw the court
   love.graphics.setColor(1, 1, 1)
   self:drawSprite(1, 204, 279, 145, 0, 0)
@@ -434,6 +463,8 @@ function client.draw(self)
   -- for _, entity in ipairs(self.gameWithoutPrediction.entities) do
   --   if entity.type == 'ball' then
   --     love.graphics.circle('line', entity.x + entity.width / 2, entity.y + entity.height / 2, 6)
+  --   else
+  --     love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
   --   end
   -- end
   -- Draw each entity's shadow
@@ -529,6 +560,21 @@ function client.draw(self)
   end
 end
 
+function client.gametriggered(self, triggerName, triggerData)
+  if triggerName == 'player-got-hit-by-ball' and self.clientId and triggerData.playerId == 'player-' .. self.clientId then
+    local clientEvent, serverEvent = self:fireEvent('knock-back-player', {
+      playerId = triggerData.playerId,
+      x = triggerData.x,
+      y = triggerData.y,
+      vx = triggerData.vx,
+      vy = triggerData.vy
+    }, {
+      sendToServer = false,
+      eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
+    })
+  end
+end
+
 function client.isEntityUsingPrediction(self, entity)
   return entity and (entity.clientId == self.clientId or entity.type == 'ball' or entity.type == 'brick')
 end
@@ -540,7 +586,7 @@ end
 function client.keypressed(self, key)
   if self:isHighlighted() then
     if key == 'space' then
-      local player = self.game:getEntityWhere({ type = 'player', clientId = self.clientId })
+      local player = self:getPlayer()
       if player then
         if player.heldBall then
           if not player.anim then
@@ -568,5 +614,11 @@ function client.drawSprite(self, sx, sy, sw, sh, x, y, flipHorizontal, flipVerti
       rotation or 0,
       flipHorizontal and -1 or 1, flipVertical and -1 or 1,
       sw / 2, sh / 2)
+  end
+end
+
+function client.getPlayer(self)
+  if self.clientId then
+    return self.game:getEntityById('player-' .. self.clientId)
   end
 end
