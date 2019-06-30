@@ -108,10 +108,11 @@ function game.update(self, dt, isRenderable)
         if entity2.type == 'ball' then
           if not entity2.isBeingHeld then
             if not entity.heldBall and entity.anim == 'catching' and entity.animFrames > 25 and self:entitiesOverlapping(entity, entity2) then
-              entity.heldBall = entity2.id
-              entity.anim = 'catching'
-              entity.animFrames = 20
-              entity2.isBeingHeld = true
+              self:trigger('player-caught-ball', {
+                playerId = entity.id,
+                ballId = entity2.id,
+                numCatches = entity.numCatches
+              })
             elseif not entity.heldBall and not entity.anim and entity2.vx == 0 and entity2.vy == 0 and self:entitiesOverlapping(entity, entity2) then
               entity.heldBall = entity2.id
               entity2.isBeingHeld = true
@@ -196,11 +197,22 @@ function game.handleEvent(self, eventType, eventData)
       charge = nil,
       aim = nil,
       invincibilityFrames = 0,
-      numTimesKnockedBack = 0
+      numTimesKnockedBack = 0,
+      numCatches = 0
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
     self:despawnEntity(self:getEntityWhere({ clientId = eventData.clientId }))
+  elseif eventType == 'catch-ball' then
+    local player = self:getEntityById(eventData.playerId)
+    local ball = self:getEntityById(eventData.ballId)
+    if player and ball and not ball.isBeingHeld then
+      player.heldBall = ball.id
+      player.anim = 'catching'
+      player.animFrames = 20
+      player.numCatches = player.numCatches + 1
+      ball.isBeingHeld = true
+    end
   elseif eventType == 'knock-back-player' then
     local player = self:getEntityById(eventData.playerId)
     if player then
@@ -422,8 +434,15 @@ function server.clientdisconnected(self, client)
 end
 
 function server.gametriggered(self, triggerName, triggerData)
-  if triggerName == 'player-got-hit-by-ball' then
-    local event = self:fireEvent('knock-back-player', {
+  if triggerName == 'player-caught-ball' then
+    self:fireEvent('catch-ball', {
+      playerId = triggerData.playerId,
+      ballId = triggerData.ballId
+    }, {
+      eventId = 'catch-' .. triggerData.playerId .. '-' .. (triggerData.numCatches + 1)
+    })
+  elseif triggerName == 'player-got-hit-by-ball' then
+    self:fireEvent('knock-back-player', {
       playerId = triggerData.playerId,
       x = triggerData.x,
       y = triggerData.y,
@@ -561,7 +580,15 @@ function client.draw(self)
 end
 
 function client.gametriggered(self, triggerName, triggerData)
-  if triggerName == 'player-got-hit-by-ball' and self.clientId and triggerData.playerId == 'player-' .. self.clientId then
+  if triggerName == 'player-caught-ball' and self.clientId and triggerData.playerId == 'player-' .. self.clientId then
+    self:fireEvent('catch-ball', {
+      playerId = triggerData.playerId,
+      ballId = triggerData.ballId
+    }, {
+      sendToServer = false,
+      eventId = 'catch-' .. triggerData.playerId .. '-' .. (triggerData.numCatches + 1)
+    })
+  elseif triggerName == 'player-got-hit-by-ball' and self.clientId and triggerData.playerId == 'player-' .. self.clientId then
     local clientEvent, serverEvent = self:fireEvent('knock-back-player', {
       playerId = triggerData.playerId,
       x = triggerData.x,
