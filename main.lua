@@ -4,6 +4,16 @@ local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
 local TIME_PER_ROUND = 12.00
 local TIME_TO_PICK_LEVEL = 1.00
+local LEVEL_DATA_LOOKUP = {
+  purpleBrick = { 119, 43, 228 },
+  pinkBrick = { 194, 31, 101 },
+  orangeBrick = { 211, 99, 33 },
+  blueBrick = { 35, 133, 183 },
+  greenBrick = { 83, 171, 48 },
+  goldBrick = { 204, 118, 11 },
+  metalBrick = { 111, 109, 93 },
+  glassBrick = { 253, 250, 234 }
+}
 
 local game = simulsim.defineGame()
 
@@ -186,6 +196,9 @@ function game.handleEvent(self, eventType, eventData)
     self:setPhase('gameplay')
     self.data.team1Score = 0
     self.data.team2Score = 0
+    self:forEachEntityWhere({ type = 'player'}, function(player)
+      player.x = (team == 1 and 100 or GAME_WIDTH - 100)
+    end)
     self:spawnEntity({
       -- id = 'ball-1',
       type = 'ball',
@@ -201,22 +214,20 @@ function game.handleEvent(self, eventType, eventData)
       freezeFrames = 0,
       isBeingHeld = false
     })
-    for r = 1, 9 do
-      for team = 1, 2 do
-        for c = 1, 5 do
-          self:spawnEntity({
-            id = 'brick-' .. c .. 'x' .. r .. '-' .. team,
-            type = 'brick',
-            x = 6 * (c - 1) + (team == 1 and 20 or GAME_WIDTH - 50),
-            y = 19 + 12 * (r - 1),
-            width = 6,
-            height = 12,
-            color = team == 1 and c or (6 - c),
-            team = team,
-            isDespawning = false
-          })
-        end
-      end
+    for i = 1, #eventData.bricks do
+      local brickData = eventData.bricks[i]
+      self:spawnEntity({
+        id = 'brick-' .. i,
+        type = 'brick',
+        x = brickData.x,
+        y = brickData.y,
+        width = 6,
+        height = 12,
+        color = brickData.color,
+        material = brickData.material,
+        team = brickData.team,
+        isDespawning = false
+      })
     end
   elseif eventType == 'spawn-player' then
     self:spawnEntity({
@@ -449,6 +460,7 @@ local network, server, client = simulsim.createGameNetwork(game, {
 })
 
 function server.load(self)
+  self.levelData = love.image.newImageData('img/level-data.png')
   self.numTeam1Players = 0
   self.numTeam2Players = 0
 end
@@ -456,7 +468,6 @@ end
 -- When a client connects to the server, spawn a playable entity for them to control
 function server.clientconnected(self, client)
   -- Pick a team for the client to start on
-  local team
   if self.numTeam1Players < self.numTeam2Players then
     team = 1
   elseif self.numTeam1Players > self.numTeam2Players then
@@ -471,7 +482,7 @@ function server.clientconnected(self, client)
     self.numTeam2Players = self.numTeam2Players + 1
   end
   -- Spawn a player for the client
-  local x = math.random(80, 120)
+  local x = 100
   local y = GAME_HEIGHT / 2 + math.random(-55, 55)
   self:fireEvent('spawn-player', {
     clientId = client.clientId,
@@ -498,7 +509,7 @@ end
 
 function server.update(self, dt)
   if self.game.data.phase == 'picking-level' and self.game.data.phaseTimer >= TIME_TO_PICK_LEVEL then
-    self:fireEvent('start-gameplay')
+    self:startGameplay(math.random(1, 8), math.random(1, 8))
   end
 end
 
@@ -538,6 +549,49 @@ function server.gametriggered(self, triggerName, triggerData)
       self:fireEvent('finish-scoring')
     end
   end
+end
+
+function server.startGameplay(self, team1Level, team2Level)
+  local bricks = {}
+  for y = 0, 44 do
+    for team = 1, 2 do
+      for x = 0, 44 do
+        local symbol
+        local r1, g1, b1 = self.levelData:getPixel(x + 47 * ((team == 1 and team1Level or team2Level) - 1), y)
+        for k, v in pairs(LEVEL_DATA_LOOKUP) do
+          local r2, g2, b2 = v[1] / 255, v[2] / 255, v[3] / 255
+          if r2 * 0.95 <= r1 and r1 <= r2 * 1.05 and g2 * 0.95 <= g1 and g1 <= g2 * 1.05 and b2 * 0.95 <= b1 and b1 <= b2 * 1.05 then
+            symbol = k
+            break
+          end
+        end
+        if symbol then
+          local material, color
+          if symbol == 'purpleBrick' then
+            color = 1
+          elseif symbol == 'pinkBrick' then
+            color = 2
+          elseif symbol == 'orangeBrick' then
+            color = 3
+          elseif symbol == 'blueBrick' then
+            color = 4
+          elseif symbol == 'greenBrick' then
+            color = 5
+          elseif symbol == 'goldBrick' then
+            material = 'gold'
+          elseif symbol == 'metalBrick' then
+            material = 'metal'
+          elseif symbol == 'glassBrick' then
+            material = 'glass'
+          end
+          table.insert(bricks, { x = team == 1 and 3 * x or GAME_WIDTH - 3 * x - 6, y = 3 * y, team = team, material = material, color = color })
+        end
+      end
+    end
+  end
+  self:fireEvent('start-gameplay', {
+    bricks = bricks
+  })
 end
 
 function client.load(self)
@@ -596,7 +650,7 @@ function client.draw(self)
     if entity.type == 'player' then
       self:drawSprite(25, 17, 10, 4, entity.x, entity.y + entity.height - 6)
     elseif entity.type == 'brick' then
-      self:drawSprite(1, 17, 8, 14, entity.x - (entity.team == 1 and 2 or 0), entity.y - 1)
+      self:drawSprite(1, 17, 8, 14, entity.x - (entity.team == 1 and 2 or 1), entity.y - 1)
     elseif entity.type == 'ball' then
       if not entity.isBeingHeld then
         self:drawSprite(25, 22, 10, 4, entity.x - 1, entity.y + entity.height - 3)
@@ -607,75 +661,80 @@ function client.draw(self)
   if player then
     self:drawSprite(player.team == 1 and 53 or 36, 17, 16, 8, player.x - 3, player.y)
   end
-  -- Draw each entity
-  love.graphics.setColor(1, 1, 1)
-  for _, entity in ipairs(self.game.entities) do
-    if entity.type == 'player' then
-      local sx = 1
-      local sy = (entity.team == 2 and 33 or 118)
-      local x = entity.x
-      local y = entity.y
-      local flipHorizontal = entity.facingX < 0
-      local animSprite
-      if entity.isMoving then
-        animSprite = 2 + math.floor((entity.moveFrames % (8 * 5)) / 5)
-      else
-        animSprite = 1
-      end
-      local dirSprite
-      if entity.facingY < 0 then
-        dirSprite = entity.facingX == 0 and 1 or 2
-      elseif entity.facingY > 0 then
-        dirSprite = entity.facingX == 0 and 5 or 4
-      else
-        dirSprite = 3
-      end
-      if entity.anim == 'getting-hit' then
-        animSprite = 19
-        dirSprite = 2
-        flipHorizontal = entity.vx < 0
-      elseif entity.anim == 'standing-up' then
-        animSprite = entity.animFrames > 10 and 20 or 21
-        dirSprite = 2
-        flipHorizontal = entity.vx < 0
-      elseif entity.anim == 'catching' then
-        animSprite = entity.heldBall and 26 or (entity.animFrames > 30 and 24 or 25)
-        dirSprite = 3
-        flipHorizontal = entity.team == 2
-      elseif entity.anim == 'charging' then
-        animSprite = entity.isMoving and entity.moveFrames % 40 > 20 and 20 or 19
-        dirSprite = 3
-        x, y = x  + (entity.team == 1 and -3 or 3), y - 1
-        flipHorizontal = entity.team == 2
-      elseif entity.anim == 'aiming' then
-        animSprite = entity.isMoving and entity.moveFrames % 70 > 35 and 22 or 21
-        dirSprite = 3
-        x, y = x + (entity.team == 1 and -3 or 3), y - 1
-        flipHorizontal = entity.team == 2
-      elseif entity.anim == 'throwing' then
-        animSprite = 23
-        dirSprite = 3
-        flipHorizontal = entity.team == 2
-      elseif entity.heldBall then
-        animSprite = animSprite + 9
-      end
-      self:drawSprite(sx + 16 * (animSprite - 1), sy + 17 * (dirSprite - 1), 15, 16, x - (flipHorizontal and 4 or 1), y - 9, flipHorizontal)
-    elseif entity.type == 'brick' then
-      local sprite
-      if entity.isDespawning then
-        sprite = 1
-      else
-        sprite = entity.color + 1
-      end
-      self:drawSprite(1 + 7 * (sprite - 1), 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
-    elseif entity.type == 'ball' then
-      if not entity.isBeingHeld then
-        self:drawSprite(70, 17, 8, 8, entity.x, entity.y - 1)
-      end
-    else
-      love.graphics.rectangle('line', entity.x, entity.y, entity.width, entity.height)
+  -- Draw all the bricks
+  self.game:forEachEntityWhere({ type = 'brick' }, function(brick)
+    local sprite
+    if brick.isDespawning then
+      sprite = 1
+    elseif brick.color then
+      sprite = brick.color + 1
+    elseif brick.material == 'gold' then
+      sprite = 10
+    elseif brick.material == 'metal' then
+      sprite = 7
+    elseif brick.material == 'glass' then
+      sprite = 9
     end
-  end
+    self:drawSprite(1 + 7 * (sprite - 1), 1, 6, 15, brick.x, brick.y - 3, brick.team == 2)
+  end)
+  -- Draw all the players
+  self.game:forEachEntityWhere({ type = 'player' }, function(player)
+    local sx = 1
+    local sy = (player.team == 2 and 33 or 118)
+    local x = player.x
+    local y = player.y
+    local flipHorizontal = player.facingX < 0
+    local animSprite
+    if player.isMoving then
+      animSprite = 2 + math.floor((player.moveFrames % (8 * 5)) / 5)
+    else
+      animSprite = 1
+    end
+    local dirSprite
+    if player.facingY < 0 then
+      dirSprite = player.facingX == 0 and 1 or 2
+    elseif player.facingY > 0 then
+      dirSprite = player.facingX == 0 and 5 or 4
+    else
+      dirSprite = 3
+    end
+    if player.anim == 'getting-hit' then
+      animSprite = 19
+      dirSprite = 2
+      flipHorizontal = player.vx < 0
+    elseif player.anim == 'standing-up' then
+      animSprite = player.animFrames > 10 and 20 or 21
+      dirSprite = 2
+      flipHorizontal = player.vx < 0
+    elseif player.anim == 'catching' then
+      animSprite = player.heldBall and 26 or (player.animFrames > 30 and 24 or 25)
+      dirSprite = 3
+      flipHorizontal = player.team == 2
+    elseif player.anim == 'charging' then
+      animSprite = player.isMoving and player.moveFrames % 40 > 20 and 20 or 19
+      dirSprite = 3
+      x, y = x  + (player.team == 1 and -3 or 3), y - 1
+      flipHorizontal = player.team == 2
+    elseif player.anim == 'aiming' then
+      animSprite = player.isMoving and player.moveFrames % 70 > 35 and 22 or 21
+      dirSprite = 3
+      x, y = x + (player.team == 1 and -3 or 3), y - 1
+      flipHorizontal = player.team == 2
+    elseif player.anim == 'throwing' then
+      animSprite = 23
+      dirSprite = 3
+      flipHorizontal = player.team == 2
+    elseif player.heldBall then
+      animSprite = animSprite + 9
+    end
+    self:drawSprite(sx + 16 * (animSprite - 1), sy + 17 * (dirSprite - 1), 15, 16, x - (flipHorizontal and 4 or 1), y - 9, flipHorizontal)
+  end)
+  -- Draw all the balls
+  self.game:forEachEntityWhere({ type = 'ball' }, function(ball)
+    if not ball.isBeingHeld then
+      self:drawSprite(70, 17, 8, 8, ball.x, ball.y - 1)
+    end
+  end)
   -- Draw aiming indicator
   if player and player.anim == 'charging' then
     self:drawSprite(120, 25, 29, 6, player.x - (player.team == 1 and 10 or 9), player.y - 15)
