@@ -2,8 +2,8 @@ local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/605d
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
-local TIME_PER_ROUND = 5.00
-local TIME_TO_PICK_LEVEL = 5.00
+local TIME_PER_ROUND = 12.00
+local TIME_TO_PICK_LEVEL = 1.00
 
 local game = simulsim.defineGame()
 
@@ -19,11 +19,25 @@ function game.update(self, dt, isRenderable)
   self.data.phaseFrame = self.data.phaseFrame + 1
   if self.data.phase == 'gameplay' and self.data.phaseTimer > TIME_PER_ROUND then
     self:setPhase('scoring')
+    for i = #self.entities, 1, -1 do
+      local entity = self.entities[i]
+      if entity.type == 'ball' then
+        self:despawnEntity(entity)
+      elseif entity.type == 'player' then
+        entity.heldBall = nil
+        if entity.anim == 'catching' or entity.anim == 'charging' or entity.anim == 'aiming' or entity.anim == 'throwing' then
+          entity.anim = nil
+          entity.animFrames = 0
+        end
+        entity.charge = nil
+        entity.aim = nil
+      end
+    end
   end
   if self.data.phase == 'scoring' and self.data.phaseFrame % 5 == 0 then
     self:trigger('score-step')
   end
-  if self.data.phase == 'declaring-winner' and self.data.phaseTimer > 5.00 then
+  if self.data.phase == 'declaring-winner' and self.data.phaseTimer > 1.00 then
     self:setPhase('picking-level')
   end
   self:forEachEntity(function(entity)
@@ -113,7 +127,7 @@ function game.update(self, dt, isRenderable)
             end
           end
         -- See if there have been collisions with any bricks
-        elseif entity2.type == 'brick' then
+        elseif entity2.type == 'brick' and not entity2.isDespawning then
           local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, 0.0, true)
         end
       end)
@@ -129,14 +143,15 @@ function game.update(self, dt, isRenderable)
         local vxOld, vyOld = entity.vx, entity.vy
         -- See if there have been collisions with any bricks
         self:forEachEntity(function(entity2)
-          if entity2.type == 'brick' then
+          if entity2.type == 'brick' and not entity2.isDespawning then
             local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
             if dir then
               xNew, yNew = x, y
               entity.vx, entity.vy = vx, vy
               if entity.vx ~= vxOld or entity.vy ~= vyOld then
-                entity2.scheduledForDespawn = true
                 entity.freezeFrames = 3
+                entity2.framesToDeath = 7
+                entity2.isDespawning = true
               end
             end
           end
@@ -150,34 +165,42 @@ function game.update(self, dt, isRenderable)
   end)
   for i = #self.entities, 1, -1 do
     local entity = self.entities[i]
+    if entity.framesToDeath then
+      entity.framesToDeath = entity.framesToDeath - 1
+      if entity.framesToDeath <= 0 then
+        entity.scheduledForDespawn = true
+      end
+    end
     if entity.scheduledForDespawn then
+      if entity.type == 'brick' then
+        self:trigger('brick-despawned', { brick = entity })
+      end
       self:despawnEntity(entity)
     end
   end
 end
 
--- Handle events that the server and client fire, which may end up changing the game state
 function game.handleEvent(self, eventType, eventData)
   -- Spawn a new player entity for a client
   if eventType == 'start-gameplay' then
     self:setPhase('gameplay')
     self.data.team1Score = 0
     self.data.team2Score = 0
-    -- self:spawnEntity({
-    --   id = 'ball-1',
-    --   type = 'ball',
-    --   x = GAME_WIDTH / 2 - 4,
-    --   y = GAME_HEIGHT / 2 - 4,
-    --   width = 8,
-    --   height = 8,
-    --   vx = 0,
-    --   vy = 0,
-    --   thrower = nil,
-    --   team = nil,
-    --   framesSinceThrow = 0,
-    --   freezeFrames = 0,
-    --   isBeingHeld = false
-    -- })
+    self:spawnEntity({
+      -- id = 'ball-1',
+      type = 'ball',
+      x = GAME_WIDTH / 2 - 4,
+      y = GAME_HEIGHT / 2 - 4,
+      width = 8,
+      height = 8,
+      vx = 0,
+      vy = 0,
+      thrower = nil,
+      team = nil,
+      framesSinceThrow = 0,
+      freezeFrames = 0,
+      isBeingHeld = false
+    })
     for r = 1, 9 do
       for team = 1, 2 do
         for c = 1, 5 do
@@ -189,7 +212,8 @@ function game.handleEvent(self, eventType, eventData)
             width = 6,
             height = 12,
             color = team == 1 and c or (6 - c),
-            team = team
+            team = team,
+            isDespawning = false
           })
         end
       end
@@ -294,7 +318,8 @@ function game.handleEvent(self, eventType, eventData)
   elseif eventType == 'score-brick' then
     local brick = self:getEntityById(eventData.brickId)
     if brick then
-      brick.scheduledForDespawn = true
+      brick.framesToDeath = 7
+      brick.isDespawning = true
       if brick.team == 1 then
         self.data.team1Score = self.data.team1Score + 1
       else
@@ -496,12 +521,19 @@ function server.gametriggered(self, triggerName, triggerData)
       eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
     })
   elseif triggerName == 'score-step' then
-    local bricks = self.game:getEntitiesWhere({ type = 'brick' })
-    if #bricks > 0 then
-      local randomBrick = bricks[math.random(1, #bricks)]
-      self:fireEvent('score-brick', {
-        brickId = randomBrick.id
-      })
+    local brick1 = self.game:getEntityWhere({ type = 'brick', team = 1, isDespawning = false })
+    local brick2 = self.game:getEntityWhere({ type = 'brick', team = 2, isDespawning = false })
+    if brick1 or brick2 then
+      if brick1 then
+        self:fireEvent('score-brick', {
+          brickId = brick1.id
+        })
+      end
+      if brick2 then
+        self:fireEvent('score-brick', {
+          brickId = brick2.id
+        })
+      end
     else
       self:fireEvent('finish-scoring')
     end
@@ -629,8 +661,13 @@ function client.draw(self)
       end
       self:drawSprite(sx + 16 * (animSprite - 1), sy + 17 * (dirSprite - 1), 15, 16, x - (flipHorizontal and 4 or 1), y - 9, flipHorizontal)
     elseif entity.type == 'brick' then
-      local colorSprite = entity.color
-      self:drawSprite(1 + 7 * (colorSprite - 1), 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
+      local sprite
+      if entity.isDespawning then
+        sprite = 1
+      else
+        sprite = entity.color + 1
+      end
+      self:drawSprite(1 + 7 * (sprite - 1), 1, 6, 15, entity.x, entity.y - 3, entity.team == 2)
     elseif entity.type == 'ball' then
       if not entity.isBeingHeld then
         self:drawSprite(70, 17, 8, 8, entity.x, entity.y - 1)
@@ -649,8 +686,8 @@ function client.draw(self)
     local dy = 10 * math.sin(angle)
     self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -3-5 or 0-5), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
-  love.graphics.setColor(0, 0, 1)
-  love.graphics.print(self.game.data.phase, 10, 10)
+  -- love.graphics.setColor(0, 0, 1)
+  -- love.graphics.print(self.game.data.phase, 10, 10)
 end
 
 function client.gametriggered(self, triggerName, triggerData)
@@ -673,6 +710,8 @@ function client.gametriggered(self, triggerName, triggerData)
       sendToServer = false,
       eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
     })
+  elseif eventType == 'brick-despawned' then
+
   end
 end
 
