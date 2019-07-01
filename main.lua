@@ -6,6 +6,7 @@ local GAME_HEIGHT = 145
 local game = simulsim.defineGame()
 
 function game.load(self)
+  self.data.roundTimeLeft = 3 * 60
   self:spawnEntity({
     id = 'ball-1',
     type = 'ball',
@@ -41,6 +42,7 @@ end
 
 -- Update the game's state every frame by moving each entity
 function game.update(self, dt, isRenderable)
+  self.data.roundTimeLeft = math.max(0.00, self.data.roundTimeLeft - dt)
   self:forEachEntity(function(entity)
     if entity.type == 'player' then
       entity.invincibilityFrames = math.max(0, entity.invincibilityFrames - 1)
@@ -379,9 +381,9 @@ end
 -- Create a client-server network for the game to run on
 local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
-  width = GAME_WIDTH,
-  height = GAME_HEIGHT,
-  numClients = 4,
+  width = 400,
+  height = 300,
+  numClients = 1,
   latency = 400
 })
 
@@ -474,9 +476,19 @@ end
 -- Draw the game for each client
 function client.draw(self)
   local player = self:getPlayer()
+  -- Draw bounding box
+  love.graphics.setColor(0.1, 0.1, 0.1)
+  love.graphics.rectangle('line', 0, 0, 400, 300)
+  love.graphics.translate(20, 50)
+  -- Draw round timer
+  love.graphics.setColor(1, 1, 1)
+  local minutesLeft = math.floor(self.game.data.roundTimeLeft / 60)
+  local secondsLeft = math.floor(self.game.data.roundTimeLeft) % 60
+  local isRed = self.game.data.roundTimeLeft < 10 and self.game.data.roundTimeLeft % 1 > 0.75
+  self:drawText(minutesLeft .. ':' .. (secondsLeft < 10 and '0' .. secondsLeft or secondsLeft), 127, -13, isRed and 2 or 1)
   -- Draw the court
   love.graphics.setColor(1, 1, 1)
-  self:drawSprite(1, 204, 279, 145, 0, 0)
+  self:drawSprite(1, 204, 281, 149, -1, 0)
   -- Draw each entity's actual state
   -- love.graphics.setColor(1, 1, 1)
   -- for _, entity in ipairs(self.gameWithoutPrediction.entities) do
@@ -647,5 +659,24 @@ end
 function client.getPlayer(self)
   if self.clientId then
     return self.game:getEntityById('player-' .. self.clientId)
+  end
+end
+
+function client.drawText(self, text, x, y, color)
+  color = color or 1
+  local currX = x
+  for i = 1, #text do
+    local c = text:sub(i, i)
+    local n = tonumber(c)
+    if c == ':' then
+      self:drawSprite(283, 204 + 10 * (color - 1), 2, 9, currX, y)
+      currX = currX + 3
+    elseif n then
+      self:drawSprite(286 + 7 * n, 204 + 10 * (color - 1), 6, 9, currX, y)
+      currX = currX + 7
+    else
+      self:drawSprite(356, 204 + 10 * (color - 1), 6, 9, currX, y)
+      currX = currX + 7
+    end
   end
 end
