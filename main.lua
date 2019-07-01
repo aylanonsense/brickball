@@ -2,47 +2,30 @@ local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/605d
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
+local TIME_PER_ROUND = 5.00
+local TIME_TO_PICK_LEVEL = 5.00
 
 local game = simulsim.defineGame()
 
 function game.load(self)
-  self.data.roundTimeLeft = 3 * 60
-  self:spawnEntity({
-    id = 'ball-1',
-    type = 'ball',
-    x = GAME_WIDTH / 2 - 4,
-    y = GAME_HEIGHT / 2 - 4,
-    width = 8,
-    height = 8,
-    vx = 0,
-    vy = 0,
-    thrower = nil,
-    team = nil,
-    framesSinceThrow = 0,
-    freezeFrames = 0,
-    isBeingHeld = false
-  })
-  for r = 1, 9 do
-    for team = 1, 2 do
-      for c = 1, 5 do
-        self:spawnEntity({
-          id = 'brick-' .. c .. 'x' .. r .. '-' .. team,
-          type = 'brick',
-          x = 6 * (c - 1) * (team == 1 and 1 or -1) + (team == 1 and 20 or GAME_WIDTH - 26),
-          y = 19 + 12 * (r - 1),
-          width = 6,
-          height = 12,
-          color = c,
-          team = team
-        })
-      end
-    end
-  end
+  self.data.team1Score = 0
+  self.data.team2Score = 0
+  self:setPhase('picking-level')
 end
 
 -- Update the game's state every frame by moving each entity
 function game.update(self, dt, isRenderable)
-  self.data.roundTimeLeft = math.max(0.00, self.data.roundTimeLeft - dt)
+  self.data.phaseTimer = self.data.phaseTimer + dt
+  self.data.phaseFrame = self.data.phaseFrame + 1
+  if self.data.phase == 'gameplay' and self.data.phaseTimer > TIME_PER_ROUND then
+    self:setPhase('scoring')
+  end
+  if self.data.phase == 'scoring' and self.data.phaseFrame % 5 == 0 then
+    self:trigger('score-step')
+  end
+  if self.data.phase == 'declaring-winner' and self.data.phaseTimer > 5.00 then
+    self:setPhase('picking-level')
+  end
   self:forEachEntity(function(entity)
     if entity.type == 'player' then
       entity.invincibilityFrames = math.max(0, entity.invincibilityFrames - 1)
@@ -176,7 +159,42 @@ end
 -- Handle events that the server and client fire, which may end up changing the game state
 function game.handleEvent(self, eventType, eventData)
   -- Spawn a new player entity for a client
-  if eventType == 'spawn-player' then
+  if eventType == 'start-gameplay' then
+    self:setPhase('gameplay')
+    self.data.team1Score = 0
+    self.data.team2Score = 0
+    -- self:spawnEntity({
+    --   id = 'ball-1',
+    --   type = 'ball',
+    --   x = GAME_WIDTH / 2 - 4,
+    --   y = GAME_HEIGHT / 2 - 4,
+    --   width = 8,
+    --   height = 8,
+    --   vx = 0,
+    --   vy = 0,
+    --   thrower = nil,
+    --   team = nil,
+    --   framesSinceThrow = 0,
+    --   freezeFrames = 0,
+    --   isBeingHeld = false
+    -- })
+    for r = 1, 9 do
+      for team = 1, 2 do
+        for c = 1, 5 do
+          self:spawnEntity({
+            id = 'brick-' .. c .. 'x' .. r .. '-' .. team,
+            type = 'brick',
+            x = 6 * (c - 1) + (team == 1 and 20 or GAME_WIDTH - 50),
+            y = 19 + 12 * (r - 1),
+            width = 6,
+            height = 12,
+            color = team == 1 and c or (6 - c),
+            team = team
+          })
+        end
+      end
+    end
+  elseif eventType == 'spawn-player' then
     self:spawnEntity({
       id = 'player-' .. eventData.clientId,
       type = 'player',
@@ -273,7 +291,25 @@ function game.handleEvent(self, eventType, eventData)
         end
       end
     end
+  elseif eventType == 'score-brick' then
+    local brick = self:getEntityById(eventData.brickId)
+    if brick then
+      brick.scheduledForDespawn = true
+      if brick.team == 1 then
+        self.data.team1Score = self.data.team1Score + 1
+      else
+        self.data.team2Score = self.data.team2Score + 1
+      end
+    end
+  elseif eventType == 'finish-scoring' then
+    self:setPhase('declaring-winner')
   end
+end
+
+function game.setPhase(self, phase)
+  self.data.phase = phase
+  self.data.phaseTimer = 0.00
+  self.data.phaseFrame = 0
 end
 
 function game.checkForBounds(self, entity, x, y, width, height, velocityMult, applyChanges)
@@ -435,6 +471,12 @@ function server.clientdisconnected(self, client)
   self:fireEvent('despawn-player', { clientId = client.clientId })
 end
 
+function server.update(self, dt)
+  if self.game.data.phase == 'picking-level' and self.game.data.phaseTimer >= TIME_TO_PICK_LEVEL then
+    self:fireEvent('start-gameplay')
+  end
+end
+
 function server.gametriggered(self, triggerName, triggerData)
   if triggerName == 'player-caught-ball' then
     self:fireEvent('catch-ball', {
@@ -453,6 +495,16 @@ function server.gametriggered(self, triggerName, triggerData)
     }, {
       eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
     })
+  elseif triggerName == 'score-step' then
+    local bricks = self.game:getEntitiesWhere({ type = 'brick' })
+    if #bricks > 0 then
+      local randomBrick = bricks[math.random(1, #bricks)]
+      self:fireEvent('score-brick', {
+        brickId = randomBrick.id
+      })
+    else
+      self:fireEvent('finish-scoring')
+    end
   end
 end
 
@@ -482,10 +534,18 @@ function client.draw(self)
   love.graphics.translate(20, 50)
   -- Draw round timer
   love.graphics.setColor(1, 1, 1)
-  local minutesLeft = math.floor(self.game.data.roundTimeLeft / 60)
-  local secondsLeft = math.floor(self.game.data.roundTimeLeft) % 60
-  local isRed = self.game.data.roundTimeLeft < 10 and self.game.data.roundTimeLeft % 1 > 0.75
-  self:drawText(minutesLeft .. ':' .. (secondsLeft < 10 and '0' .. secondsLeft or secondsLeft), 127, -13, isRed and 2 or 1)
+  if self.game.data.phase == 'gameplay' then
+    self:drawTimer(TIME_PER_ROUND - self.game.data.phaseTimer)
+  elseif self.game.data.phase == 'picking-level' then
+    self:drawTimer(TIME_TO_PICK_LEVEL - self.game.data.phaseTimer)
+  else
+    self:drawTimer(0)
+  end
+  -- Draw team scores
+  if self.game.data.phase == 'scoring' or self.game.data.phase == 'declaring-winner' then
+    self:drawText(self.game.data.team1Score, self.game.data.team1Score < 10 and 77 or 72, -13, 4)
+    self:drawText(self.game.data.team2Score, GAME_WIDTH - (self.game.data.team2Score < 10 and 83 or 88), -13, 2)
+  end
   -- Draw the court
   love.graphics.setColor(1, 1, 1)
   self:drawSprite(1, 204, 281, 149, -1, 0)
@@ -589,6 +649,8 @@ function client.draw(self)
     local dy = 10 * math.sin(angle)
     self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -3-5 or 0-5), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
+  love.graphics.setColor(0, 0, 1)
+  love.graphics.print(self.game.data.phase, 10, 10)
 end
 
 function client.gametriggered(self, triggerName, triggerData)
@@ -664,6 +726,7 @@ end
 
 function client.drawText(self, text, x, y, color)
   color = color or 1
+  text = '' .. (text or '')
   local currX = x
   for i = 1, #text do
     local c = text:sub(i, i)
@@ -679,4 +742,12 @@ function client.drawText(self, text, x, y, color)
       currX = currX + 7
     end
   end
+end
+
+function client.drawTimer(self, time)
+  time = math.max(0, time)
+  local minutesLeft = math.floor(time / 60)
+  local secondsLeft = math.floor(time) % 60
+  local isRed = time < 10 and time % 1 > 0.75
+  self:drawText(minutesLeft .. ':' .. (secondsLeft < 10 and '0' .. secondsLeft or secondsLeft), 127, -13, isRed and 2 or 1)
 end
