@@ -1,4 +1,4 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/90195fd36b30116a2e62d917aaca0a3f92066d56/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/ef694f7bf179d55065fbe36bdd8a0f93f87d5855/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
@@ -286,7 +286,9 @@ function game.handleEvent(self, eventType, eventData)
       invincibilityFrames = 0,
       numTimesKnockedBack = 0,
       freezeFrames = 0,
-      numCatches = 0
+      numCatches = 0,
+      username = eventData.username,
+      photoUrl = eventData.photoUrl
     })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
@@ -544,7 +546,9 @@ function server.clientconnected(self, client)
     clientId = client.clientId,
     x = GAME_WIDTH / 2 + (team == 2 and 40 or -40),
     y = y,
-    team = team
+    team = team,
+    username = client.username and client.user.username,
+    photoUrl = client.user and client.user.photoUrl
   })
 end
 
