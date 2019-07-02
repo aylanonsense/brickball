@@ -547,7 +547,7 @@ function server.clientconnected(self, client)
     x = GAME_WIDTH / 2 + (team == 2 and 40 or -40),
     y = y,
     team = team,
-    username = client.username and client.user.username,
+    username = client.user and client.user.username,
     photoUrl = client.user and client.user.photoUrl
   })
 end
@@ -665,6 +665,8 @@ function server.startGameplay(self, team1Level, team2Level)
 end
 
 function client.load(self)
+  self.font = love.graphics.newFont(6)
+  love.graphics.setFont(self.font)
   love.graphics.setDefaultFilter('nearest', 'nearest')
   self.spriteSheet = love.graphics.newImage('img/sprite-sheet.png')
 end
@@ -685,6 +687,7 @@ end
 function client.draw(self)
   local player = self:getPlayer()
   -- Draw bounding box
+  love.graphics.clear(12 / 255, 3 / 255, 28 / 255)
   love.graphics.setColor(1, 0, 0)
   love.graphics.rectangle('line', 2, 2, 295, 186)
   love.graphics.translate(10, 28)
@@ -802,13 +805,25 @@ function client.draw(self)
       animSprite = animSprite + 9
     end
     self:drawSprite(sx + 16 * (animSprite - 1), sy + 17 * (dirSprite - 1), 15, 16, x - (flipHorizontal and 4 or 1), y - 9, flipHorizontal)
+    if player.username and (player.clientId ~= self.clientId or (player.anim ~= 'charging' and player.anim ~= 'aiming')) then
+      if player.team == 1 then
+        love.graphics.setColor(72 / 255, 167 / 255, 205 / 255)
+      else
+        love.graphics.setColor(218 / 255, 63 / 255, 111 / 255)
+      end
+      love.graphics.push()
+      love.graphics.scale(0.6, 0.6)
+      love.graphics.print(player.username, (player.x + 5.5) / 0.6 - self.font:getWidth(player.username) / 2, (player.y - 13) / 0.6)
+      love.graphics.pop()
+      love.graphics.setColor(1, 1, 1)
+    end
     -- Draw ball drop countdown
     if player.heldBall then
       local ball = self.game:getEntityById(player.heldBall)
       if ball then
         local timeLeft = math.max(0, math.floor((MAX_BALL_HOLD_TIME - ball.timeSinceCatch) / 1.5))
         if timeLeft < 3 then
-          self:drawSprite(293 + 7 * timeLeft, 204, 6, 9, player.x + 2, player.y - 25)
+          self:drawSprite(293 + 7 * timeLeft, 204, 6, 9, player.x + (player.team == 1 and 2 - 13 or 2 + 13), player.y - 6)
         end
       end
     end
