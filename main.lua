@@ -1,9 +1,9 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/2f79c359150559c3ca1f3c107da9d56b8a12d5b6/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/92de6059e5a0fbe99fe5a588d3a71a7a100c9dc5/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
 local TIME_PER_ROUND = 181.00
-local TIME_BEFORE_ROUND_START = 3.00
+local TIME_BEFORE_ROUND_START = 15.00
 local WINNER_CELEBRATION_TIME = 7.00
 local MAX_BALL_HOLD_TIME = 10.00
 local LEVEL_DATA_LOOKUP = {
@@ -30,24 +30,16 @@ function game.update(self, dt, isRenderable)
   self.data.phaseTimer = self.data.phaseTimer + dt
   self.data.phaseFrame = self.data.phaseFrame + 1
   if self.data.phase == 'gameplay' and self.data.phaseTimer > TIME_PER_ROUND then
-    self:setPhase('scoring')
-    for i = #self.entities, 1, -1 do
-      local entity = self.entities[i]
-      if entity.type == 'ball' then
-        self:despawnEntity(entity)
-      elseif entity.type == 'player' then
-        entity.heldBall = nil
-        if entity.anim == 'catching' or entity.anim == 'charging' or entity.anim == 'aiming' or entity.anim == 'throwing' then
-          entity.anim = nil
-          entity.animFrames = 0
-        end
-        entity.charge = nil
-        entity.aim = nil
-        entity.baseAim = nil
-      end
+    self:endGameplay()
+  end
+  if self.data.phase == 'gameplay' and self.data.phaseTimer > 5.00 and self.data.phaseFrame % 30 == 0 then
+    local numTeam1Bricks = #self:getEntitiesWhere({ type = 'brick', team = 1 })
+    local numTeam2Bricks = #self:getEntitiesWhere({ type = 'brick', team = 2 })
+    if numTeam1Bricks <= 0 or numTeam2Bricks <= 0 then
+      self:endGameplay()
     end
   end
-  if self.data.phase == 'scoring' and self.data.phaseFrame % 5 == 0 then
+  if self.data.phase == 'scoring' and self.data.phaseFrame > 120 and self.data.phaseFrame % 5 == 0 then
     self:trigger('score-step')
   end
   if self.data.phase == 'declaring-winner' and self.data.phaseTimer > WINNER_CELEBRATION_TIME then
@@ -172,9 +164,9 @@ function game.update(self, dt, isRenderable)
             if entity2.type == 'ball' and entity.id ~= entity2.id and not entity2.isBeingHeld and entity.framesSinceBallCollision > 40 and entity2.framesSinceBallCollision > 40 and ((entity.vx > 0) ~= (entity2.vx > 0) or (entity.vy > 0) ~= (entity2.vy > 0)) and self:entitiesOverlapping(entity, entity2) then
               entity.vx, entity.vy, entity2.vx, entity2.vy = entity2.vx, entity2.vy, entity.vx, entity.vy
               if entity.vx == 0 then
-                entity.vx = (entity2.vx > 0 and -20 or 20)
+                entity.vx = (entity2.vx > 0 and -40 or 40)
               elseif entity2.vx == 0 then
-                entity2.vx = (entity.vx > 0 and -20 or 20)
+                entity2.vx = (entity.vx > 0 and -40 or 40)
               end
               entity.freezeFrames, entity2.freezeFrames = 5, 5
               entity.framesSinceBallCollision, entity2.framesSinceBallCollision = 0, 0
@@ -372,6 +364,25 @@ function game.handleEvent(self, eventType, eventData)
     end
   elseif eventType == 'finish-scoring' then
     self:setPhase('declaring-winner')
+  end
+end
+
+function game.endGameplay(self)
+  self:setPhase('scoring')
+  for i = #self.entities, 1, -1 do
+    local entity = self.entities[i]
+    if entity.type == 'ball' then
+      self:despawnEntity(entity)
+    elseif entity.type == 'player' then
+      entity.heldBall = nil
+      if entity.anim == 'catching' or entity.anim == 'charging' or entity.anim == 'aiming' or entity.anim == 'throwing' then
+        entity.anim = nil
+        entity.animFrames = 0
+      end
+      entity.charge = nil
+      entity.aim = nil
+      entity.baseAim = nil
+    end
   end
 end
 
@@ -702,7 +713,7 @@ function client.draw(self)
     self:drawTimer(0)
   end
   -- Draw team scores
-  if self.game.data.phase == 'scoring' or (self.game.data.phase == 'declaring-winner' and self.game.data.phaseFrame < 65) then
+  if self.game.data.phase == 'scoring' or (self.game.data.phase == 'declaring-winner' and self.game.data.phaseFrame < 120) then
     self:drawText(self.game.data.team1Score, self.game.data.team1Score < 10 and 77 or 72, -13, 4)
     self:drawText(self.game.data.team2Score, GAME_WIDTH - (self.game.data.team2Score < 10 and 83 or 88), -13, 2)
   elseif self.game.data.phase == 'declaring-winner' then
