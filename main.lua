@@ -1,8 +1,8 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/605d24dcfa2c2edec872edf61122cf893286ff25/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/90195fd36b30116a2e62d917aaca0a3f92066d56/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
-local TIME_PER_ROUND = 11.00
+local TIME_PER_ROUND = 181.00
 local TIME_BEFORE_ROUND_START = 3.00
 local WINNER_CELEBRATION_TIME = 7.00
 local MAX_BALL_HOLD_TIME = 10.00
@@ -43,6 +43,7 @@ function game.update(self, dt, isRenderable)
         end
         entity.charge = nil
         entity.aim = nil
+        entity.baseAim = nil
       end
     end
   end
@@ -75,24 +76,21 @@ function game.update(self, dt, isRenderable)
         elseif entity.anim then
           entity.animFrames = entity.animFrames + 1
           if entity.anim == 'charging' then
-            entity.charge = ((7 * entity.animFrames + 100) % 400) - 100
+            entity.charge = ((6 * entity.animFrames + 100) % 400) - 100
             if entity.charge > 100 then
               entity.charge = 200 - entity.charge
             end
           elseif entity.anim == 'aiming' then
-            entity.aim = (((9 - 8 * math.abs(entity.charge) / 100) * entity.animFrames + 100) % 400) - 100
-            if entity.aim > 100 then
-              entity.aim = 200 - entity.aim
-            end
+            local wobbleRange = 15 - 7 * math.abs(entity.charge) / 100
+            entity.baseAim = math.min(math.max(-100 + wobbleRange, entity.baseAim + 200 * moveY * dt), 100 - wobbleRange)
+            entity.aim = entity.baseAim + wobbleRange * math.sin(entity.animFrames / (5 + 15 * math.abs(entity.charge / 100)))
           end
         end
         -- Calculate speed based on the player's state
         local speed
         if entity.anim == 'charging' then
           speed = 20
-        elseif entity.anim == 'aiming' then
-          speed = 5
-        elseif entity.anim == 'throwing' or entity.anim == 'catching' or entity.anim == 'getting-hit' or entity.anim == 'standing-up' then
+        elseif entity.anim == 'aiming' or entity.anim == 'throwing' or entity.anim == 'catching' or entity.anim == 'getting-hit' or entity.anim == 'standing-up' then
           speed = 0
         else
           speed = 60
@@ -171,9 +169,15 @@ function game.update(self, dt, isRenderable)
           local xNew, yNew
           local vxOld, vyOld = entity.vx, entity.vy
           self:forEachEntity(function(entity2)
-            if entity2.type == 'ball' and entity.id ~= entity2.id and not entity2.isBeingHeld and entity.framesSinceBallCollision > 60 and entity2.framesSinceBallCollision > 60 and ((entity.vx > 0) ~= (entity2.vx > 0) or (entity.vy > 0) ~= (entity2.vy > 0)) and self:entitiesOverlapping(entity, entity2) then
+            if entity2.type == 'ball' and entity.id ~= entity2.id and not entity2.isBeingHeld and entity.framesSinceBallCollision > 40 and entity2.framesSinceBallCollision > 40 and ((entity.vx > 0) ~= (entity2.vx > 0) or (entity.vy > 0) ~= (entity2.vy > 0)) and self:entitiesOverlapping(entity, entity2) then
               entity.vx, entity.vy, entity2.vx, entity2.vy = entity2.vx, entity2.vy, entity.vx, entity.vy
+              if entity.vx == 0 then
+                entity.vx = (entity2.vx > 0 and -20 or 20)
+              elseif entity2.vx == 0 then
+                entity2.vx = (entity.vx > 0 and -20 or 20)
+              end
               entity.freezeFrames, entity2.freezeFrames = 5, 5
+              entity.framesSinceBallCollision, entity2.framesSinceBallCollision = 0, 0
             elseif entity2.type == 'brick' and not entity2.isDespawning then
               local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
               if dir then
@@ -278,6 +282,7 @@ function game.handleEvent(self, eventType, eventData)
       animFrames = 0,
       charge = nil,
       aim = nil,
+      baseAim = nil,
       invincibilityFrames = 0,
       numTimesKnockedBack = 0,
       freezeFrames = 0,
@@ -318,6 +323,7 @@ function game.handleEvent(self, eventType, eventData)
         elseif eventType == 'aim-throw' then
           player.anim = 'aiming'
           player.animFrames = 0
+          player.baseAim = 0
           player.aim = 0
           if eventData.charge then
             player.charge = eventData.charge
@@ -331,13 +337,14 @@ function game.handleEvent(self, eventType, eventData)
           player.animFrames = 45 - 30 * math.abs(charge / 100)
           player.charge = nil
           player.aim = nil
+          player.baseAim = nil
           player.heldBall = nil
           if ball then
-            local angle = aim / 73
+            local angle = aim / 83
             local dx = 10 * math.cos(angle) * (player.team == 1 and 1 or -1)
             local dy = 10 * math.sin(angle)
             local speed = 90 - 60 * math.abs(charge / 100)
-            ball.freezeFrames = player.animFrames - 2
+            ball.freezeFrames = player.animFrames - 5
             ball.vx = speed * math.cos(angle) * (player.team == 1 and 1 or -1)
             ball.vy = speed * math.sin(angle)
             ball.x = player.x + dx + player.width / 2 - ball.width / 2
@@ -813,10 +820,11 @@ function client.draw(self)
     self:drawSprite(120, 25, 29, 6, player.x - (player.team == 1 and 10 or 9), player.y - 15)
     self:drawSprite(150, 21, 1, 10, player.x + (player.team == 1 and 4 or 5) + 13 * player.charge / 100, player.y - 18)
   elseif player and player.anim == 'aiming' then
-    local angle = player.aim / 73
+    local angle = player.aim / 83
     local dx = 11 * math.cos(angle) * (player.team == 1 and 1 or -1)
     local dy = 10 * math.sin(angle)
-    self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -3-5 or 0-5), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
+    self:drawSprite(411, 204, 4, 54, player.x + (player.team == 1 and 5 or 1), player.y - 28, player.team == 2)
+    self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -7 or -6), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
 end
 
@@ -872,9 +880,9 @@ function client.keypressed(self, key)
         if player.heldBall then
           if not player.anim then
             self:fireEvent('charge-throw', { playerId = player.id })
-          elseif player.anim == 'charging' and player.animFrames > 10 then
+          elseif player.anim == 'charging' and player.animFrames > 4 then
             self:fireEvent('aim-throw', { playerId = player.id, charge = player.charge })
-          elseif player.anim == 'aiming' and player.animFrames > 10 then
+          elseif player.anim == 'aiming' and player.animFrames > 4 then
             self:fireEvent('throw', { playerId = player.id, charge = player.charge, aim = player.aim })
           end
         elseif not player.anim then
