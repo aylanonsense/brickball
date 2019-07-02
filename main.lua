@@ -4,6 +4,7 @@ local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
 local TIME_PER_ROUND = 181.00
 local TIME_BEFORE_ROUND_START = 3.00
+local MAX_BALL_HOLD_TIME = 10.00
 local LEVEL_DATA_LOOKUP = {
   purpleBrick = { 119, 43, 228 },
   pinkBrick = { 194, 31, 101 },
@@ -107,6 +108,18 @@ function game.update(self, dt, isRenderable)
         entity.stillFrames = entity.stillFrames + 1
         entity.moveFrames = 0
       end
+      if entity.heldBall then
+        local ball = self:getEntityById(entity.heldBall)
+        if ball and ball.timeSinceCatch > MAX_BALL_HOLD_TIME then
+          self:trigger('player-held-ball-too-long', {
+            playerId = entity.id,
+            x = entity.x,
+            y = entity.y,
+            team = entity.team,
+            numTimesKnockedBack = entity.numTimesKnockedBack
+          })
+        end
+      end
       if entity.team == 1 then
         self:checkForBounds(entity, 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, 0.0, true)
       else
@@ -123,6 +136,7 @@ function game.update(self, dt, isRenderable)
           elseif not entity.heldBall and not entity.anim and entity2.vx == 0 and entity2.vy == 0 and self:entitiesOverlapping(entity, entity2) then
             entity.heldBall = entity2.id
             entity2.isBeingHeld = true
+            entity2.timeSinceCatch = 0.00
           elseif entity.invincibilityFrames <= 0 and (entity2.framesSinceThrow > 15 or entity2.thrower ~= entity.id) and (entity2.vx ~= 0 or entity2.vy ~= 0) and self:entitiesOverlapping(entity, entity2) then
             self:trigger('player-got-hit-by-ball', {
               playerId = entity.id,
@@ -141,34 +155,37 @@ function game.update(self, dt, isRenderable)
     elseif entity.type == 'ball' then
       if entity.freezeFrames > 0 then
         entity.freezeFrames = entity.freezeFrames - 1
-      elseif not entity.isBeingHeld then
-        entity.framesSinceThrow = entity.framesSinceThrow + 1
-        entity.framesSinceBallCollision = entity.framesSinceBallCollision + 1
-        entity.x = entity.x + entity.vx * dt
-        entity.y = entity.y + entity.vy * dt
-        self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
-        local xNew, yNew
-        local vxOld, vyOld = entity.vx, entity.vy
-        self:forEachEntity(function(entity2)
-          if entity2.type == 'ball' and entity.id ~= entity2.id and not entity2.isBeingHeld and entity.framesSinceBallCollision > 30 and entity2.framesSinceBallCollision > 30 and self:entitiesOverlapping(entity, entity2) then
-            entity.vx, entity.vy, entity2.vx, entity2.vy = entity2.vx, entity2.vy, entity.vx, entity.vy
-            entity.freezeFrames, entity2.freezeFrames = 5, 5
-          elseif entity2.type == 'brick' and not entity2.isDespawning then
-            local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
-            if dir then
-              xNew, yNew = x, y
-              entity.vx, entity.vy = vx, vy
-              if entity.vx ~= vxOld or entity.vy ~= vyOld then
-                entity.freezeFrames = 3
-                entity2.framesToDeath = 7
-                entity2.isDespawning = true
+      else
+        entity.timeSinceCatch = entity.timeSinceCatch + dt
+        if not entity.isBeingHeld then
+          entity.framesSinceThrow = entity.framesSinceThrow + 1
+          entity.framesSinceBallCollision = entity.framesSinceBallCollision + 1
+          entity.x = entity.x + entity.vx * dt
+          entity.y = entity.y + entity.vy * dt
+          self:checkForBounds(entity, 0, 0, GAME_WIDTH, GAME_HEIGHT, -1.0, true)
+          local xNew, yNew
+          local vxOld, vyOld = entity.vx, entity.vy
+          self:forEachEntity(function(entity2)
+            if entity2.type == 'ball' and entity.id ~= entity2.id and not entity2.isBeingHeld and entity.framesSinceBallCollision > 45 and entity2.framesSinceBallCollision > 45 and ((entity.vx > 0) ~= (entity2.vx > 0) or (entity.vy > 0) ~= (entity2.vy > 0)) and self:entitiesOverlapping(entity, entity2) then
+              entity.vx, entity.vy, entity2.vx, entity2.vy = entity2.vx, entity2.vy, entity.vx, entity.vy
+              entity.freezeFrames, entity2.freezeFrames = 5, 5
+            elseif entity2.type == 'brick' and not entity2.isDespawning then
+              local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
+              if dir then
+                xNew, yNew = x, y
+                entity.vx, entity.vy = vx, vy
+                if entity.vx ~= vxOld or entity.vy ~= vyOld then
+                  entity.freezeFrames = 3
+                  entity2.framesToDeath = 7
+                  entity2.isDespawning = true
+                end
               end
             end
+          end)
+          -- Update the ball's position as a result of colliding with a brick
+          if xNew and yNew then
+            entity.x, entity.y = xNew, yNew
           end
-        end)
-        -- Update the ball's position as a result of colliding with a brick
-        if xNew and yNew then
-          entity.x, entity.y = xNew, yNew
         end
       end
     end
@@ -212,6 +229,7 @@ function game.handleEvent(self, eventType, eventData)
         team = nil,
         framesSinceThrow = 0,
         framesSinceBallCollision = 0,
+        timeSinceCatch = 0.00,
         freezeFrames = 0,
         isBeingHeld = false
       })
@@ -269,34 +287,14 @@ function game.handleEvent(self, eventType, eventData)
       player.animFrames = 20
       player.numCatches = player.numCatches + 1
       ball.isBeingHeld = true
+      ball.timeSinceCatch = 0.00
     end
   elseif eventType == 'knock-back-player' then
     local player = self:getEntityById(eventData.playerId)
     if player then
       player.x = eventData.x
       player.y = eventData.y
-      player.vx = eventData.vx
-      player.vy = eventData.vy
-      player.numTimesKnockedBack = player.numTimesKnockedBack + 1
-      player.anim = 'getting-hit'
-      player.animFrames = 20
-      player.invincibilityFrames = 150
-      if player.heldBall then
-        local ball = self:getEntityById(player.heldBall)
-        if ball then
-          ball.freezeFrames = 10
-          ball.vx = -player.vx / 4
-          ball.vy = -player.vy / 4
-          ball.x = player.x + player.width / 2 - ball.width / 2
-          ball.y = player.y - 3 + player.height / 2 - ball.height / 2
-          ball.isBeingHeld = false
-          ball.thrower = player.id
-          ball.team = player.team
-          ball.framesSinceThrow = 0
-          ball.framesSinceBallCollision = 0
-        end
-      end
-      player.heldBall = nil
+      self:knockBackPlayer(player, eventData.vx, eventData.vy)
     end
   elseif eventType == 'charge-throw' or eventType == 'aim-throw' or eventType == 'throw' or eventType == 'catch' then
     local player = self:getEntityById(eventData.playerId)
@@ -364,6 +362,31 @@ function game.setPhase(self, phase)
   self.data.phase = phase
   self.data.phaseTimer = 0.00
   self.data.phaseFrame = 0
+end
+
+function game.knockBackPlayer(self, player, vx, vy)
+  player.vx = vx
+  player.vy = vy
+  player.numTimesKnockedBack = player.numTimesKnockedBack + 1
+  player.anim = 'getting-hit'
+  player.animFrames = 20
+  player.invincibilityFrames = 150
+  if player.heldBall then
+    local ball = self:getEntityById(player.heldBall)
+    if ball then
+      ball.freezeFrames = 3
+      ball.vx = -player.vx / 2
+      ball.vy = -player.vy / 2
+      ball.x = player.x + player.width / 2 - ball.width / 2
+      ball.y = player.y - 3 + player.height / 2 - ball.height / 2
+      ball.isBeingHeld = false
+      ball.thrower = player.id
+      ball.team = player.team
+      ball.framesSinceThrow = 0
+      ball.framesSinceBallCollision = 0
+    end
+  end
+  player.heldBall = nil
 end
 
 function game.checkForBounds(self, entity, x, y, width, height, velocityMult, applyChanges)
@@ -546,6 +569,16 @@ function server.gametriggered(self, triggerName, triggerData)
       y = triggerData.y,
       vx = triggerData.vx,
       vy = triggerData.vy
+    }, {
+      eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
+    })
+  elseif triggerName == 'player-held-ball-too-long' then
+    self:fireEvent('knock-back-player', {
+      playerId = triggerData.playerId,
+      x = triggerData.x,
+      y = triggerData.y,
+      vx = triggerData.team == 1 and -70 or 70,
+      vy = 0
     }, {
       eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
     })
@@ -747,6 +780,16 @@ function client.draw(self)
       animSprite = animSprite + 9
     end
     self:drawSprite(sx + 16 * (animSprite - 1), sy + 17 * (dirSprite - 1), 15, 16, x - (flipHorizontal and 4 or 1), y - 9, flipHorizontal)
+    -- Draw ball drop countdown
+    if player.heldBall then
+      local ball = self.game:getEntityById(player.heldBall)
+      if ball then
+        local timeLeft = math.max(0, math.floor((MAX_BALL_HOLD_TIME - ball.timeSinceCatch) / 1.5))
+        if timeLeft < 3 then
+          self:drawSprite(293 + 7 * timeLeft, 204, 6, 9, player.x + 2, player.y - 25)
+        end
+      end
+    end
   end)
   -- Draw all the balls
   self.game:forEachEntityWhere({ type = 'ball' }, function(ball)
@@ -784,6 +827,17 @@ function client.gametriggered(self, triggerName, triggerData)
       y = triggerData.y,
       vx = triggerData.vx,
       vy = triggerData.vy
+    }, {
+      sendToServer = false,
+      eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
+    })
+  elseif triggerName == 'player-held-ball-too-long' and self.clientId and triggerData.playerId == 'player-' .. self.clientId then
+    self:fireEvent('knock-back-player', {
+      playerId = triggerData.playerId,
+      x = triggerData.x,
+      y = triggerData.y,
+      vx = triggerData.team == 1 and -70 or 70,
+      vy = 0
     }, {
       sendToServer = false,
       eventId = 'knockback-' .. triggerData.playerId .. '-' .. (triggerData.numTimesKnockedBack + 1)
