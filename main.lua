@@ -3,7 +3,7 @@ local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/605d
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
 local TIME_PER_ROUND = 12.00
-local TIME_TO_PICK_LEVEL = 1.00
+local TIME_BEFORE_ROUND_START = 1.00
 local LEVEL_DATA_LOOKUP = {
   purpleBrick = { 119, 43, 228 },
   pinkBrick = { 194, 31, 101 },
@@ -20,7 +20,7 @@ local game = simulsim.defineGame()
 function game.load(self)
   self.data.team1Score = 0
   self.data.team2Score = 0
-  self:setPhase('picking-level')
+  self:setPhase('starting-up')
 end
 
 -- Update the game's state every frame by moving each entity
@@ -48,7 +48,7 @@ function game.update(self, dt, isRenderable)
     self:trigger('score-step')
   end
   if self.data.phase == 'declaring-winner' and self.data.phaseTimer > 1.00 then
-    self:setPhase('picking-level')
+    self:setPhase('starting-up')
   end
   self:forEachEntity(function(entity)
     if entity.type == 'player' then
@@ -332,9 +332,9 @@ function game.handleEvent(self, eventType, eventData)
       brick.framesToDeath = 7
       brick.isDespawning = true
       if brick.team == 1 then
-        self.data.team1Score = self.data.team1Score + 1
+        self.data.team1Score = self.data.team1Score + (brick.material == 'gold' and 3 or 1)
       else
-        self.data.team2Score = self.data.team2Score + 1
+        self.data.team2Score = self.data.team2Score + (brick.material == 'gold' and 3 or 1)
       end
     end
   elseif eventType == 'finish-scoring' then
@@ -453,9 +453,9 @@ end
 -- Create a client-server network for the game to run on
 local network, server, client = simulsim.createGameNetwork(game, {
   exposeGameWithoutPrediction = true,
-  width = 400,
-  height = 300,
-  numClients = 1,
+  width = 299,
+  height = 190,
+  numClients = 4,
   latency = 400
 })
 
@@ -508,8 +508,8 @@ function server.clientdisconnected(self, client)
 end
 
 function server.update(self, dt)
-  if self.game.data.phase == 'picking-level' and self.game.data.phaseTimer >= TIME_TO_PICK_LEVEL then
-    self:startGameplay(math.random(1, 8), math.random(1, 8))
+  if self.game.data.phase == 'starting-up' and self.game.data.phaseTimer >= TIME_BEFORE_ROUND_START then
+    self:startGameplay(1, 1)
   end
 end
 
@@ -615,15 +615,16 @@ end
 function client.draw(self)
   local player = self:getPlayer()
   -- Draw bounding box
-  love.graphics.setColor(0.1, 0.1, 0.1)
-  love.graphics.rectangle('line', 0, 0, 400, 300)
-  love.graphics.translate(20, 50)
+  love.graphics.setColor(1, 0, 0)
+  love.graphics.rectangle('line', 2, 2, 295, 186)
+  love.graphics.translate(10, 28)
   -- Draw round timer
   love.graphics.setColor(1, 1, 1)
   if self.game.data.phase == 'gameplay' then
     self:drawTimer(TIME_PER_ROUND - self.game.data.phaseTimer)
-  elseif self.game.data.phase == 'picking-level' then
-    self:drawTimer(TIME_TO_PICK_LEVEL - self.game.data.phaseTimer)
+  elseif self.game.data.phase == 'starting-up' then
+    self:drawSprite(283, 254, 66, 6, 108, -22)
+    self:drawTimer(TIME_BEFORE_ROUND_START - self.game.data.phaseTimer)
   else
     self:drawTimer(0)
   end
