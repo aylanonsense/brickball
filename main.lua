@@ -20,6 +20,8 @@ local LEVEL_DATA_LOOKUP = {
 local game = simulsim.defineGame()
 
 function game.load(self)
+  self.data.numTeam1Players = 0
+  self.data.numTeam2Players = 0
   self.data.team1Score = 0
   self.data.team2Score = 0
   self:setPhase('starting-up')
@@ -115,9 +117,9 @@ function game.update(self, dt, isRenderable)
           end
         end
         if entity.team == 1 then
-          self:checkForBounds(entity, 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, 0.0, true)
+          self:checkForBounds(entity, 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 3, 0.0, true)
         else
-          self:checkForBounds(entity, GAME_WIDTH / 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 2, 0.0, true)
+          self:checkForBounds(entity, GAME_WIDTH / 2, 3, GAME_WIDTH / 2 - 2, GAME_HEIGHT - 3, 0.0, true)
         end
         self:forEachEntity(function(entity2)
           if entity2.type == 'ball' and not entity2.isBeingHeld then
@@ -209,8 +211,53 @@ function game.update(self, dt, isRenderable)
 end
 
 function game.handleEvent(self, eventType, eventData)
-  -- Spawn a new player entity for a client
-  if eventType == 'start-gameplay' then
+  if eventType == 'join-game' then
+    local player = self:getEntityById('player-' .. eventData.clientId)
+    if not player then
+      local team
+      if self.data.numTeam1Players <= self.data.numTeam2Players then
+        team = 1
+      else
+        team = 2
+      end
+      -- Update the player counts
+      if team == 1 then
+        self.data.numTeam1Players = self.data.numTeam1Players + 1
+      elseif team == 2 then
+        self.data.numTeam2Players = self.data.numTeam2Players + 1
+      end
+      -- Spawn a player
+      self:spawnEntity({
+        id = 'player-' .. eventData.clientId,
+        type = 'player',
+        clientId = eventData.clientId,
+        x = GAME_WIDTH / 2 + (team == 2 and 40 or -40) - 5,
+        y = GAME_HEIGHT / 2 - 4,
+        vx = 0,
+        vy = 0,
+        team = team,
+        facingX = 1,
+        facingY = -1,
+        width = 10,
+        height = 8,
+        isMoving = false,
+        moveFrames = 0,
+        stillFrames = 0,
+        heldBall = nil,
+        anim = nil,
+        animFrames = 0,
+        charge = nil,
+        aim = nil,
+        baseAim = nil,
+        invincibilityFrames = 0,
+        numTimesKnockedBack = 0,
+        freezeFrames = 0,
+        numCatches = 0,
+        username = eventData.username,
+        photoUrl = eventData.photoUrl
+      })
+    end
+  elseif eventType == 'start-gameplay' then
     self:setPhase('gameplay')
     self.data.team1Score = 0
     self.data.team2Score = 0
@@ -252,39 +299,18 @@ function game.handleEvent(self, eventType, eventData)
         isDespawning = false
       })
     end
-  elseif eventType == 'spawn-player' then
-    self:spawnEntity({
-      id = 'player-' .. eventData.clientId,
-      type = 'player',
-      clientId = eventData.clientId,
-      x = eventData.x - 5,
-      y = eventData.y - 4,
-      vx = 0,
-      vy = 0,
-      team = eventData.team,
-      facingX = 1,
-      facingY = -1,
-      width = 10,
-      height = 8,
-      isMoving = false,
-      moveFrames = 0,
-      stillFrames = 0,
-      heldBall = nil,
-      anim = nil,
-      animFrames = 0,
-      charge = nil,
-      aim = nil,
-      baseAim = nil,
-      invincibilityFrames = 0,
-      numTimesKnockedBack = 0,
-      freezeFrames = 0,
-      numCatches = 0,
-      username = eventData.username,
-      photoUrl = eventData.photoUrl
-    })
   -- Despawn a player
   elseif eventType == 'despawn-player' then
-    self:despawnEntity(self:getEntityWhere({ clientId = eventData.clientId }))
+    local player = self:getEntityWhere({ id = 'player-' .. eventData.clientId })
+    if player then
+      -- Update the player counts
+      if player.team == 1 then
+        self.data.numTeam1Players = self.data.numTeam1Players - 1
+      elseif player.team == 2 then
+        self.data.numTeam2Players = self.data.numTeam2Players - 1
+      end
+      self:despawnEntity(player)
+    end
   elseif eventType == 'catch-ball' then
     local player = self:getEntityById(eventData.playerId)
     local ball = self:getEntityById(eventData.ballId)
@@ -530,50 +556,10 @@ local network, server, client = simulsim.createGameNetwork(game, {
 
 function server.load(self)
   self.levelData = love.image.newImageData('img/level-data.png')
-  self.numTeam1Players = 0
-  self.numTeam2Players = 0
-end
-
--- When a client connects to the server, spawn a playable entity for them to control
-function server.clientconnected(self, client)
-  -- Pick a team for the client to start on
-  if self.numTeam1Players < self.numTeam2Players then
-    team = 1
-  elseif self.numTeam1Players > self.numTeam2Players then
-    team = 2
-  else
-    team = math.random(1, 2)
-  end
-  -- Update the player counts
-  if team == 1 then
-    self.numTeam1Players = self.numTeam1Players + 1
-  elseif team == 2 then
-    self.numTeam2Players = self.numTeam2Players + 1
-  end
-  -- Spawn a player for the client
-  local x = 100
-  local y = GAME_HEIGHT / 2 + math.random(-55, 55)
-  self:fireEvent('spawn-player', {
-    clientId = client.clientId,
-    x = GAME_WIDTH / 2 + (team == 2 and 40 or -40),
-    y = y,
-    team = team,
-    username = client.user and client.user.username,
-    photoUrl = client.user and client.user.photoUrl
-  })
 end
 
 -- When a client disconnects from the server, despawn their player entity
 function server.clientdisconnected(self, client)
-  -- Update the player counts
-  local player = self.game:getEntityWhere({ type = 'player', clientId = client.clientId })
-  if player then
-    if player.team == 1 then
-      self.numTeam1Players = self.numTeam1Players - 1
-    elseif player.team == 2 then
-      self.numTeam2Players = self.numTeam2Players - 1
-    end
-  end
   -- Despawn the client's player
   self:fireEvent('despawn-player', { clientId = client.clientId })
 end
@@ -676,10 +662,23 @@ function server.startGameplay(self, team1Level, team2Level)
 end
 
 function client.load(self)
+  self.isShowingTitleScreen = true
+  self.wasDisconnected = false
+  self.failedToConnect = false
   self.font = love.graphics.newFont(6)
   love.graphics.setFont(self.font)
   love.graphics.setDefaultFilter('nearest', 'nearest')
   self.spriteSheet = love.graphics.newImage('img/sprite-sheet.png')
+end
+
+function client.disconnected(self)
+  self.isShowingTitleScreen = true
+  self.wasDisconnected = true
+end
+
+function client.connectfailed(self)
+  self.isShowingTitleScreen = true
+  self.failedToConnect = true
 end
 
 -- Every frame the client tells the server which buttons it's pressing
@@ -697,10 +696,7 @@ end
 -- Draw the game for each client
 function client.draw(self)
   local player = self:getPlayer()
-  -- Draw bounding box
   love.graphics.clear(12 / 255, 3 / 255, 28 / 255)
-  love.graphics.setColor(1, 0, 0)
-  love.graphics.rectangle('line', 2, 2, 295, 186)
   love.graphics.translate(10, 28)
   -- Draw round timer
   love.graphics.setColor(1, 1, 1)
@@ -856,6 +852,30 @@ function client.draw(self)
     self:drawSprite(411, 204, 4, 54, player.x + (player.team == 1 and 5 or 1), player.y - 28, player.team == 2)
     self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -7 or -6), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
+  if self.isShowingTitleScreen then
+    -- Blackout screen
+    love.graphics.setColor(0, 0, 0, 0.8)
+    love.graphics.rectangle('fill', -10, -28, 299, 190)
+    -- Draw title
+    love.graphics.setColor(1, 1, 1)
+    self:drawSprite(1, 354, 230, 80, 25, 20)
+    -- Draw status
+    if self.failedToConnect then
+      self:drawSprite(152, 9, 113, 6, 83, 115)
+    elseif self.wasDisconnected then
+      self:drawSprite(152, 23, 113, 6, 83, 115)
+    elseif not self:isConnected() then
+      self:drawSprite(152, 2, 113, 6, 83, 115)
+    elseif self.game.frame % 60 < 50 then
+      self:drawSprite(152, 16, 113, 6, 83, 115)
+    end
+  elseif not player then
+    if self.game.frame % 150 < 75 then
+      self:drawSprite(266, 2, 113, 6, 83, 43)
+    else
+      self:drawSprite(266, 9, 113, 6, 83, 43)
+    end
+  end
 end
 
 function client.gametriggered(self, triggerName, triggerData)
@@ -905,9 +925,19 @@ end
 function client.keypressed(self, key)
   if self:isHighlighted() then
     if key == 'space' then
-      local player = self:getPlayer()
-      if player then
-        if player.heldBall then
+      if self.isShowingTitleScreen then
+        if self:isConnected() then
+          self.isShowingTitleScreen = false
+        end
+      else
+        local player = self:getPlayer()
+        if not player then
+          self:fireEvent('join-game', {
+            clientId = self.clientId,
+            username = self.user and self.user.username,
+            photoUrl = self.user and self.user.photoUrl
+          })
+        elseif player.heldBall then
           if not player.anim then
             self:fireEvent('charge-throw', { playerId = player.id })
           elseif player.anim == 'charging' and player.animFrames > 4 then
