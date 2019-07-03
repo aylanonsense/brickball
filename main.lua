@@ -1,9 +1,9 @@
-local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/92de6059e5a0fbe99fe5a588d3a71a7a100c9dc5/simulsim.lua'
+local simulsim = require 'https://raw.githubusercontent.com/bridgs/simulsim/ccfcf1942fdb2b16acc87ed35815005d869cac29/simulsim.lua'
 
 local GAME_WIDTH = 279
 local GAME_HEIGHT = 145
-local TIME_PER_ROUND = 181.00
-local TIME_BEFORE_ROUND_START = 15.00
+local TIME_PER_ROUND = 136.00
+local TIME_BEFORE_ROUND_START = 16.00
 local WINNER_CELEBRATION_TIME = 7.00
 local MAX_BALL_HOLD_TIME = 12.00
 local LEVEL_DATA_LOOKUP = {
@@ -24,7 +24,7 @@ function game.load(self)
   self.data.numTeam2Players = 0
   self.data.team1Score = 0
   self.data.team2Score = 0
-  self:setPhase('starting-up')
+  self:startUp()
 end
 
 -- Update the game's state every frame by moving each entity
@@ -45,7 +45,7 @@ function game.update(self, dt, isRenderable)
     self:trigger('score-step')
   end
   if self.data.phase == 'declaring-winner' and self.data.phaseTimer > WINNER_CELEBRATION_TIME then
-    self:setPhase('starting-up')
+    self:startUp()
   end
   self:forEachEntity(function(entity)
     if entity.type == 'player' then
@@ -146,6 +146,8 @@ function game.update(self, dt, isRenderable)
           -- See if there have been collisions with any bricks
           elseif entity2.type == 'brick' and not entity2.isDespawning then
             local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, 0.0, true)
+          elseif entity2.type == 'level-selector' and entity.team == entity2.team and self:entitiesOverlapping(entity, entity2) then
+            entity.levelVote = entity2.level
           end
         end)
       end
@@ -176,11 +178,17 @@ function game.update(self, dt, isRenderable)
               local dir, x, y, vx, vy = self:checkForEntityCollision(entity, entity2, -1.0, false)
               if dir then
                 xNew, yNew = x, y
-                entity.vx, entity.vy = vx, vy
-                if entity.vx ~= vxOld or entity.vy ~= vyOld then
-                  entity.freezeFrames = 3
-                  entity2.framesToDeath = 7
-                  entity2.isDespawning = true
+                if entity2.material ~= 'glass' then
+                  entity.vx, entity.vy = vx, vy
+                end
+                if entity2.material == 'glass' or (entity.vx ~= vxOld or entity.vy ~= vyOld) then
+                  entity.freezeFrames = (entity2.material == 'glass' and 1 or 3)
+                  if entity2.material == 'metal' then
+                    entity2.material = 'broken-metal'
+                  else
+                    entity2.framesToDeath = 7
+                    entity2.isDespawning = true
+                  end
                 end
               end
             end
@@ -261,6 +269,11 @@ function game.handleEvent(self, eventType, eventData)
     self:setPhase('gameplay')
     self.data.team1Score = 0
     self.data.team2Score = 0
+    for i = #self.entities, 1, -1 do
+      if self.entities[i].type == 'level-selector' then
+        self:despawnEntity(self.entities[i])
+      end
+    end
     self:forEachEntityWhere({ type = 'player'}, function(player)
       player.freezeFrames = 30
       player.x = GAME_WIDTH / 2 - player.width / 2 + (player.team == 2 and 40 or -40)
@@ -354,7 +367,7 @@ function game.handleEvent(self, eventType, eventData)
           local charge = eventData.charge or player.charge
           local aim = eventData.aim or player.aim
           player.anim = 'throwing'
-          player.animFrames = 45 - 30 * math.abs(charge / 100)
+          player.animFrames = 35 - 15 * math.abs(charge / 100)
           player.charge = nil
           player.aim = nil
           player.baseAim = nil
@@ -364,7 +377,7 @@ function game.handleEvent(self, eventType, eventData)
             local dx = 10 * math.cos(angle) * (player.team == 1 and 1 or -1)
             local dy = 10 * math.sin(angle)
             local speed = 90 - 60 * math.abs(charge / 100)
-            ball.freezeFrames = player.animFrames - 5
+            ball.freezeFrames = player.animFrames - 2
             ball.vx = speed * math.cos(angle) * (player.team == 1 and 1 or -1)
             ball.vy = speed * math.sin(angle)
             ball.x = player.x + dx + player.width / 2 - ball.width / 2
@@ -408,6 +421,23 @@ function game.endGameplay(self)
       entity.charge = nil
       entity.aim = nil
       entity.baseAim = nil
+    end
+  end
+end
+
+function game.startUp(self)
+  self:setPhase('starting-up')
+  for team = 1, 2 do
+    for lvl = 1, 8 do
+      self:spawnEntity({
+        type = 'level-selector',
+        x = (team == 1 and 7 or GAME_WIDTH - 35) + 32 * ((lvl - 1) % 4) * (team == 1 and 1 or -1),
+        y = lvl <= 4 and 7 or 110,
+        width = 27,
+        height = 28,
+        team = team,
+        level = lvl
+      })
     end
   end
 end
@@ -547,11 +577,12 @@ end
 
 -- Create a client-server network for the game to run on
 local network, server, client = simulsim.createGameNetwork(game, {
-  exposeGameWithoutPrediction = true,
+  exposeGameWithoutPrediction = false,
   width = 299,
   height = 190,
+  framesBetweenClientSmoothing = 1,
   numClients = 4,
-  latency = 450
+  latency = 250
 })
 
 function server.load(self)
@@ -566,7 +597,20 @@ end
 
 function server.update(self, dt)
   if self.game.data.phase == 'starting-up' and self.game.data.phaseTimer >= TIME_BEFORE_ROUND_START then
-    self:startGameplay(1, 1)
+    local team1Votes = {}
+    local team2Votes = {}
+    self.game:forEachEntityWhere({ type = 'player' }, function(player)
+      if player.levelVote then
+        if player.team == 1 then
+          table.insert(team1Votes, player.levelVote)
+        elseif player.team == 2 then
+          table.insert(team2Votes, player.levelVote)
+        end
+      end
+    end)
+    local team1Level = #team1Votes > 0 and team1Votes[math.random(1, #team1Votes)] or 1
+    local team2Level = #team2Votes > 0 and team2Votes[math.random(1, #team2Votes)] or 1
+    self:startGameplay(team1Level, team2Level)
   end
 end
 
@@ -744,6 +788,24 @@ function client.draw(self)
       end
     end
   end
+  -- Draw level selection
+  -- self:drawSprite(274, 354, 123, 127, 9, 9)
+  -- self:drawSprite(274, 354, 123, 127, 147, 9, true)
+  -- Draw all level selectors
+  self.game:forEachEntityWhere({ type = 'level-selector' }, function(selector)
+    local borderSprite
+    if player and player.team == selector.team and player.levelVote == selector.level then
+      if player.team == 1 then
+        borderSprite = 2
+      else
+        borderSprite = 3
+      end
+    else
+      borderSprite = 1
+    end
+    self:drawSprite(234 + 28 * (borderSprite - 1), 379, 27, 28, selector.x, selector.y, selector.team == 2)
+    self:drawSprite(234 + 24 * (selector.level - 1), 354, 23, 24, selector.x + 2, selector.y + 2, selector.team == 2)
+  end)
   -- Draw an indicator under your player character
   if player then
     self:drawSprite(player.team == 1 and 53 or 36, 17, 16, 8, player.x - 3, player.y)
@@ -759,6 +821,8 @@ function client.draw(self)
       sprite = 10
     elseif brick.material == 'metal' then
       sprite = 7
+    elseif brick.material == 'broken-metal' then
+      sprite = 8
     elseif brick.material == 'glass' then
       sprite = 9
     end
@@ -920,6 +984,24 @@ function client.gametriggered(self, triggerName, triggerData)
     })
   elseif eventType == 'brick-despawned' then
 
+  end
+end
+
+function client.smoothEntity(self, game, entity, idealEntity)
+  if entity and idealEntity and entity.type == 'player' and entity.clientId == self.clientId then
+    local x, y = entity.x, entity.y
+    local baseAim, aim, charge = entity.baseAim, entity.aim, entity.charge
+    game:copyEntityProps(idealEntity, entity)
+    entity.baseAim, entity.aim, entity.charge = baseAim, aim, charge
+    entity.x = x * 0.5 + entity.x * 0.5
+    entity.y = y * 0.5 + entity.y * 0.5
+    return entity
+  elseif entity and idealEntity then
+    return game:copyEntityProps(idealEntity, entity)
+  elseif idealEntity then
+    return game:cloneEntity(idealEntity)
+  else
+    return nil
   end
 end
 
