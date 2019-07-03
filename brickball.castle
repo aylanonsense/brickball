@@ -1,7 +1,7 @@
 ---
 main: main.lua
-name: Some Multiplayer Game
-description: Making a multiplayer game of some kind.
+name: brickball
+description: A multiplayer game of balls and bricks.
 username: bridgs
 multiplayer:
     - enabled: true

@@ -1,2 +1,2 @@
-# some-multiplayer-game
-Making a multiplayer game to test out simulsim.
+# brickball
+A multiplayer Castle game of balls and bricks.
