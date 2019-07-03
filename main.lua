@@ -5,7 +5,7 @@ local GAME_HEIGHT = 145
 local TIME_PER_ROUND = 181.00
 local TIME_BEFORE_ROUND_START = 15.00
 local WINNER_CELEBRATION_TIME = 7.00
-local MAX_BALL_HOLD_TIME = 10.00
+local MAX_BALL_HOLD_TIME = 12.00
 local LEVEL_DATA_LOOKUP = {
   purpleBrick = { 119, 43, 228 },
   pinkBrick = { 194, 31, 101 },
@@ -662,6 +662,7 @@ function server.startGameplay(self, team1Level, team2Level)
 end
 
 function client.load(self)
+  self.isShowingInstructions = false
   self.isShowingTitleScreen = true
   self.wasDisconnected = false
   self.failedToConnect = false
@@ -673,11 +674,13 @@ end
 
 function client.disconnected(self)
   self.isShowingTitleScreen = true
+  self.isShowingInstructions = false
   self.wasDisconnected = true
 end
 
 function client.connectfailed(self)
   self.isShowingTitleScreen = true
+  self.isShowingInstructions = false
   self.failedToConnect = true
 end
 
@@ -852,12 +855,16 @@ function client.draw(self)
     self:drawSprite(411, 204, 4, 54, player.x + (player.team == 1 and 5 or 1), player.y - 28, player.team == 2)
     self:drawSprite(121, 17, 22, 7, player.x + dx + (player.team == 1 and -7 or -6), player.y + dy - 3, player.team == 2, false, (player.team == 1 and angle or -angle))
   end
-  if self.isShowingTitleScreen then
+  -- Draw keys
+  self:drawSprite(330, 305, 66, 8, 200, 151)
     -- Blackout screen
+  if self.isShowingTitleScreen or self.isShowingInstructions then
     love.graphics.setColor(0, 0, 0, 0.8)
     love.graphics.rectangle('fill', -10, -28, 299, 190)
-    -- Draw title
     love.graphics.setColor(1, 1, 1)
+  end
+  if self.isShowingTitleScreen then
+    -- Draw title
     self:drawSprite(1, 354, 230, 80, 25, 20)
     -- Draw status
     if self.failedToConnect then
@@ -869,6 +876,8 @@ function client.draw(self)
     elseif self.game.frame % 60 < 50 then
       self:drawSprite(152, 16, 113, 6, 83, 115)
     end
+  elseif self.isShowingInstructions then
+    self:drawSprite(1, self.game.frame % 90 < 45 and 546 or 435, 272, 110, 4, 20)
   elseif not player then
     if self.game.frame % 150 < 75 then
       self:drawSprite(266, 2, 113, 6, 83, 43)
@@ -924,7 +933,9 @@ end
 
 function client.keypressed(self, key)
   if self:isHighlighted() then
-    if key == 'space' then
+    if key == 'i' and not self.isShowingTitleScreen then
+      self.isShowingInstructions = not self.isShowingInstructions
+    elseif key == 'space' then
       if self.isShowingTitleScreen then
         if self:isConnected() then
           self.isShowingTitleScreen = false
