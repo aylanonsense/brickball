@@ -2,6 +2,8 @@
 main: main.lua
 name: brickball
 description: A multiplayer game of balls and bricks.
+primaryColor: FAD049
+coverImage: cover-image.png
 username: bridgs
 multiplayer:
     - enabled: true
