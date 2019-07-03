@@ -842,7 +842,7 @@ function client.draw(self)
   -- Draw all the balls
   self.game:forEachEntityWhere({ type = 'ball' }, function(ball)
     if not ball.isBeingHeld then
-      self:drawSprite(70, 17, 8, 8, ball.x, ball.y - 1)
+      self:drawSprite(70, 17, 8, 8, ball.x, ball.y - (ball.vx == 0 and ball.vy == 0 and 0 or 1))
     end
   end)
   -- Draw aiming indicator
